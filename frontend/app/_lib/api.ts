@@ -7,6 +7,7 @@ import type {
   GameWithPlayers,
   JoinResult,
   PlayerDetail,
+  LeaderboardEntry,
   PublicPlayer,
   Settlement,
   Trade,
@@ -82,6 +83,9 @@ export const api = {
     req<{ settlement: Settlement | null }>(`/games/${gameId}/results`).then((r) => r.settlement),
 
   // Persisted achievements/XP for the authenticated user (BE-authoritative; unlock idempotent).
+  // All-time leaderboard (auth optional — a token just flags the caller's own row).
+  getLeaderboard: () => req<{ entries: LeaderboardEntry[] }>(`/leaderboard`).then((r) => r.entries),
+
   getAchievements: () => req<AchievementState>(`/achievements/me`),
 
   unlockAchievement: (id: string) =>

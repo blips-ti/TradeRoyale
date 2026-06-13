@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Radio } from "lucide-react";
+import { Bot, Radio } from "lucide-react";
 
 /* A small, looping "live trade battle" mockup for the landing hero: a moving multi-line chart,
    a cycling token-swap feed with real logos, and a NAV that shakes on each tick. Self-contained,
@@ -174,8 +174,17 @@ export function BattlePreview() {
               </motion.p>
             </div>
 
-            {/* moving chart */}
-            <div className="mt-3">
+            {/* moving chart with an "AI agents" badge */}
+            <div className="relative mt-3">
+              <div className="absolute right-1 top-0 z-10 flex items-center gap-1 rounded-pill border border-[color:var(--color-lime)]/30 bg-black/50 px-2 py-0.5 backdrop-blur-sm">
+                <motion.span
+                  className="h-1.5 w-1.5 rounded-full bg-[color:var(--color-lime)]"
+                  animate={{ opacity: [0.4, 1, 0.4] }}
+                  transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
+                />
+                <Bot className="h-3 w-3 text-[color:var(--color-lime)]" />
+                <span className="text-[8.5px] font-bold uppercase tracking-wide text-[color:var(--color-lime)]">AI Agents</span>
+              </div>
               <MiniChart />
             </div>
 

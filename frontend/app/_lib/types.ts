@@ -121,6 +121,14 @@ export type GameEvent = {
   data: Record<string, unknown>;
 };
 
+/** One leaderboard row — wins + all-time signed PnL (base-unit USDC). `you` flags the caller. */
+export type LeaderboardEntry = {
+  displayName: string;
+  wins: number;
+  pnlUsd: string;
+  you: boolean;
+};
+
 /** A token the player holds (from the Octav portfolio, broadcast on portfolio_update). */
 export type Holding = {
   symbol: string;

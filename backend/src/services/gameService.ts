@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+import { BigNumber } from "bignumber.js";
+
 import { agentRunner, AgentRunner } from "../agent/agentRunner.js";
 import { env } from "../env.js";
 import type { Game, Player, PublicPlayer, Settlement, Trade } from "../domain/types.js";
@@ -58,6 +60,14 @@ export interface JoinGameResult {
 export interface GameWithPlayers {
   game: Game;
   players: PublicPlayer[];
+}
+
+// One leaderboard row (per user): wins + all-time signed PnL (base-unit USDC string).
+export interface LeaderboardEntry {
+  displayName: string;
+  wins: number;
+  pnlUsd: string;
+  you: boolean;
 }
 
 export type GameListStatus = "open" | "live" | "all";
@@ -230,6 +240,37 @@ export class GameService {
   async getSettlement(gameId: string): Promise<Settlement | null> {
     await this.requireGame(gameId);
     return this.settlements.get(gameId);
+  }
+
+  // All-time leaderboard: one row per user (Privy id), aggregating wins + signed PnL across
+  // every settled game, richest PnL first. `callerOwnerId` (if known) flags the caller's row.
+  async getLeaderboard(callerOwnerId?: string): Promise<LeaderboardEntry[]> {
+    const ended = await this.games.listEnded();
+    const byOwner = new Map<string, { displayName: string; wins: number; pnl: BigNumber }>();
+    for (const game of ended) {
+      const settlement = await this.settlements.get(game.id);
+      if (!settlement) continue;
+      const players = await this.players.getMany(settlement.perPlayer.map((r) => r.playerId));
+      const ownerById = new Map(players.map((p) => [p.id, p.ownerId]));
+      for (const result of settlement.perPlayer) {
+        const ownerId = ownerById.get(result.playerId);
+        if (!ownerId) continue;
+        const entry = byOwner.get(ownerId) ?? { displayName: result.displayName, wins: 0, pnl: new BigNumber(0) };
+        entry.pnl = entry.pnl.plus(result.pnl || "0");
+        if (settlement.winnerPlayerId === result.playerId) entry.wins += 1;
+        entry.displayName = result.displayName;
+        byOwner.set(ownerId, entry);
+      }
+    }
+    const caller = callerOwnerId?.toLowerCase();
+    const entries: LeaderboardEntry[] = [...byOwner.entries()].map(([ownerId, e]) => ({
+      displayName: e.displayName,
+      wins: e.wins,
+      pnlUsd: e.pnl.toFixed(0),
+      you: caller ? ownerId === caller : false,
+    }));
+    entries.sort((a, b) => new BigNumber(b.pnlUsd).comparedTo(a.pnlUsd) ?? 0);
+    return entries;
   }
 
   async joinGame(input: JoinGameInput): Promise<JoinGameResult> {

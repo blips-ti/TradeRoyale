@@ -1,12 +1,13 @@
 "use client";
 
 import { cn } from "@/app/_lib/cn";
-import { Swords, User } from "lucide-react";
+import { Swords, Trophy, User } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const TABS = [
   { href: "/dashboard", label: "Matches", icon: Swords },
+  { href: "/leaderboard", label: "Ranks", icon: Trophy },
   { href: "/profile", label: "Profile", icon: User },
 ];
 

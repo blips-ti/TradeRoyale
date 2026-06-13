@@ -10,6 +10,7 @@ import { UnauthorizedError } from './middleware/auth.js';
 import { buildAchievementRoutes, UnknownAchievementError } from './routes/achievementRoutes.js';
 import { buildGameRoutes, ForbiddenError, GameConflictError, GameNotFoundError } from './routes/gameRoutes.js';
 import { buildHealthRoutes } from './routes/healthRoutes.js';
+import { buildLeaderboardRoutes } from './routes/leaderboardRoutes.js';
 import { buildUnlinkAuthRoutes } from './routes/unlinkAuthRoutes.js';
 import { buildGameWsRoutes } from './ws/gameWsRoutes.js';
 
@@ -42,6 +43,7 @@ export function createApp(): AppBundle {
 
   app.route('/', buildHealthRoutes());
   app.route('/games', buildGameRoutes());
+  app.route('/leaderboard', buildLeaderboardRoutes());
   app.route('/achievements', buildAchievementRoutes());
   app.route('/api/unlink', buildUnlinkAuthRoutes());
   app.route('/ws', buildGameWsRoutes(upgradeWebSocket));
