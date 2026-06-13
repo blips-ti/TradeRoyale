@@ -1,8 +1,10 @@
 import { Hono } from 'hono';
 import { createNodeWebSocket } from '@hono/node-ws';
+import { cors } from 'hono/cors';
 import { HTTPException } from 'hono/http-exception';
 import { logger as honoLogger } from 'hono/logger';
 
+import { env } from './env.js';
 import { logger } from './logger.js';
 import { buildGameRoutes, GameConflictError, GameNotFoundError } from './routes/gameRoutes.js';
 import { buildHealthRoutes } from './routes/healthRoutes.js';
@@ -22,6 +24,15 @@ export function createApp(): AppBundle {
   const app = new Hono();
   const { upgradeWebSocket, injectWebSocket } = createNodeWebSocket({ app });
 
+  const corsOrigin = env.CORS_ORIGINS === '*' ? '*' : env.CORS_ORIGINS.split(',').map((o) => o.trim());
+  app.use(
+    '*',
+    cors({
+      origin: corsOrigin,
+      allowHeaders: ['Content-Type', 'x-player-id'],
+      allowMethods: ['GET', 'POST', 'PUT', 'OPTIONS'],
+    }),
+  );
   app.use('*', honoLogger((message, ...rest) => logger.debug({ rest }, message)));
 
   app.route('/', buildHealthRoutes());

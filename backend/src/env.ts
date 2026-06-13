@@ -29,6 +29,8 @@ const booleanFlag = z
 
 const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
+  // Comma-separated browser-origin allowlist for CORS, or '*' for any (dev default).
+  CORS_ORIGINS: z.string().min(1).default('*'),
   REDIS_URL: z.string().min(1, 'REDIS_URL is required'),
   UNLINK_API_KEY: z.string().min(1, 'UNLINK_API_KEY is required'),
   // The default is still the TESTNET value: Unlink's published supported-chains list only

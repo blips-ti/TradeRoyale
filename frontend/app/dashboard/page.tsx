@@ -1,14 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { Radio } from "lucide-react";
+import { Radio, WifiOff } from "lucide-react";
 import { useGame } from "@/app/_lib/store";
-import { resolveAll } from "@/app/_lib/matches";
+import { useGames } from "@/app/_lib/useGames";
 import { useNow } from "@/app/_lib/useNow";
 import { usd } from "@/app/_lib/format";
 import { AppShell } from "@/app/_components/AppShell";
 import { MatchCard } from "@/app/_components/MatchCard";
-import { Card, Reveal } from "@/app/_components/ui";
+import { Card, Reveal, Spinner } from "@/app/_components/ui";
 
 export default function DashboardPage() {
   return (
@@ -19,32 +19,28 @@ export default function DashboardPage() {
 }
 
 function Dashboard() {
-  const { anchorAt, joinedMatchId } = useGame();
+  const { joinedMatchId } = useGame();
   const now = useNow(1000);
   const [tab, setTab] = useState<"all" | "mine">("all");
+  const { views, loading, error } = useGames();
 
-  if (!anchorAt || !now) return null;
+  const visible = tab === "mine" ? views.filter((v) => v.id === joinedMatchId) : views;
+  // Ongoing (lobby): fullest first. Live: least time remaining.
+  const ongoing = visible.filter((v) => v.bucket === "ongoing").sort((a, b) => b.playerCount - a.playerCount);
+  const liveList = visible.filter((v) => v.bucket === "live").sort((a, b) => (a.endsAt ?? 0) - (b.endsAt ?? 0));
 
-  const matches = resolveAll(anchorAt, now);
-  const live = matches.filter((m) => m.status === "live").length;
-  const totalOnline = matches.reduce((a, m) => a + m.onlineNow, 0);
-  const biggestPot = Math.max(...matches.map((m) => m.prizePoolUsd));
-
-  const shown = tab === "mine" ? matches.filter((m) => m.id === joinedMatchId) : matches;
-  // Upcoming first (soonest start), then live (least time remaining).
-  const upcoming = shown
-    .filter((m) => m.status === "upcoming")
-    .sort((a, b) => a.startsAt - b.startsAt);
-  const liveList = shown.filter((m) => m.status === "live").sort((a, b) => a.endsAt - b.endsAt);
+  const liveCount = views.filter((v) => v.bucket === "live").length;
+  const totalPlayers = views.reduce((a, v) => a + v.playerCount, 0);
+  const topPot = views.reduce((a, v) => Math.max(a, v.prizePoolUsd), 0);
 
   return (
     <div className="flex flex-1 flex-col gap-4 pt-1">
       {/* live stats strip */}
       <Reveal>
         <div className="grid grid-cols-3 gap-2">
-          <StatTile label="Online" value={totalOnline.toLocaleString()} live />
-          <StatTile label="Live now" value={`${live}`} />
-          <StatTile label="Top pot" value={usd(biggestPot)} accent />
+          <StatTile label="Players" value={totalPlayers.toLocaleString()} live />
+          <StatTile label="Live now" value={`${liveCount}`} />
+          <StatTile label="Top pot" value={usd(topPot)} accent />
         </div>
       </Reveal>
 
@@ -65,22 +61,37 @@ function Dashboard() {
         </div>
       </Reveal>
 
-      {shown.length === 0 ? (
+      {/* body states */}
+      {loading && views.length === 0 ? (
+        <Reveal delay={0.08}>
+          <Card className="flex items-center justify-center gap-2 p-8 text-[14px] text-muted">
+            <Spinner /> Loading Matches…
+          </Card>
+        </Reveal>
+      ) : error && views.length === 0 ? (
+        <Reveal delay={0.08}>
+          <Card className="flex flex-col items-center gap-2 p-8 text-center">
+            <WifiOff className="h-6 w-6 text-[color:var(--color-loss)]" />
+            <p className="text-[14px] text-fg">Can&apos;t reach the arena</p>
+            <p className="text-[12.5px] text-muted">The backend isn&apos;t responding. It&apos;ll appear here once it&apos;s live.</p>
+          </Card>
+        </Reveal>
+      ) : visible.length === 0 ? (
         <Reveal delay={0.08}>
           <Card className="p-8 text-center text-[14px] text-muted">
-            {tab === "mine" ? "You haven't joined a Match yet." : "No Matches right now."}
+            {tab === "mine" ? "You haven't joined a Match yet." : "No open Matches right now."}
           </Card>
         </Reveal>
       ) : (
         <div className="flex flex-col gap-3">
-          {upcoming.length > 0 && (
+          {ongoing.length > 0 && (
             <>
               <Reveal delay={0.08}>
-                <SectionHead title="Ongoing" count={upcoming.length} />
+                <SectionHead title="Ongoing" count={ongoing.length} />
               </Reveal>
-              {upcoming.map((m, i) => (
+              {ongoing.map((m, i) => (
                 <Reveal key={m.id} delay={0.1 + i * 0.04}>
-                  <MatchCard match={m} now={now} joinedMatchId={joinedMatchId} />
+                  <MatchCard match={m} now={now} joinedGameId={joinedMatchId} />
                 </Reveal>
               ))}
             </>
@@ -92,7 +103,7 @@ function Dashboard() {
               </Reveal>
               {liveList.map((m, i) => (
                 <Reveal key={m.id} delay={0.14 + i * 0.04}>
-                  <MatchCard match={m} now={now} joinedMatchId={joinedMatchId} />
+                  <MatchCard match={m} now={now} joinedGameId={joinedMatchId} />
                 </Reveal>
               ))}
             </>
@@ -120,24 +131,10 @@ function SectionHead({ title, count, live }: { title: string; count: number; liv
   );
 }
 
-function StatTile({
-  label,
-  value,
-  accent,
-  live,
-}: {
-  label: string;
-  value: string;
-  accent?: boolean;
-  live?: boolean;
-}) {
+function StatTile({ label, value, accent, live }: { label: string; value: string; accent?: boolean; live?: boolean }) {
   return (
     <Card className="flex flex-col items-center gap-1 p-3">
-      <span
-        className={`font-display text-[19px] font-bold leading-none tnum ${
-          accent ? "text-[color:var(--color-lime)]" : "text-fg"
-        }`}
-      >
+      <span className={`font-display text-[19px] font-bold leading-none tnum ${accent ? "text-[color:var(--color-lime)]" : "text-fg"}`}>
         {value}
       </span>
       <span className="flex items-center gap-1 text-[10.5px] uppercase tracking-[0.12em] text-muted">

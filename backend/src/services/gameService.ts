@@ -51,6 +51,13 @@ export interface GameWithPlayers {
   players: PublicPlayer[];
 }
 
+export type GameListStatus = "open" | "live" | "all";
+
+// A game in a list response, enriched with its current player count.
+export interface GameListItem extends Game {
+  playerCount: number;
+}
+
 export class GameConflictError extends Error {}
 export class GameNotFoundError extends Error {}
 
@@ -85,6 +92,23 @@ export class GameService {
   }
 
   async listOpenGames(): Promise<Game[]> {
+    return this.games.listOpen();
+  }
+
+  // Lobby ("open"), in-progress ("live"), or both ("all"), each with its player count.
+  async listGames(status: GameListStatus): Promise<GameListItem[]> {
+    const games = await this.gamesForStatus(status);
+    return Promise.all(
+      games.map(async (game) => ({ ...game, playerCount: await this.games.countPlayers(game.id) })),
+    );
+  }
+
+  private async gamesForStatus(status: GameListStatus): Promise<Game[]> {
+    if (status === "live") return this.games.listLive();
+    if (status === "all") {
+      const [open, live] = await Promise.all([this.games.listOpen(), this.games.listLive()]);
+      return [...open, ...live];
+    }
     return this.games.listOpen();
   }
 

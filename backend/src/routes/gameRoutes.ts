@@ -16,6 +16,7 @@ import {
 import {
   createGameSchema,
   joinGameSchema,
+  listGamesQuerySchema,
   startGameSchema,
   updateStrategySchema,
 } from "./schemas.js";
@@ -32,8 +33,9 @@ export function buildGameRoutes(
     return c.json(game, 201);
   });
 
-  router.get("/", async (c) => {
-    const games = await service.listOpenGames();
+  router.get("/", zValidator("query", listGamesQuerySchema), async (c) => {
+    const { status } = c.req.valid("query");
+    const games = await service.listGames(status);
     return c.json({ games });
   });
 

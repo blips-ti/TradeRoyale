@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { ArrowUpRight, Clock, Lock } from "lucide-react";
-import type { Match } from "@/app/_lib/matches";
+import type { MatchView } from "@/app/_lib/gameView";
 import { usd } from "@/app/_lib/format";
 import { formatDelta } from "@/app/_lib/useNow";
 import { Card, LiveBadge, MatchLogo, Status, Tag } from "./ui";
@@ -10,24 +10,26 @@ import { Card, LiveBadge, MatchLogo, Status, Tag } from "./ui";
 export function MatchCard({
   match,
   now,
-  joinedMatchId,
+  joinedGameId,
   featured = false,
 }: {
-  match: Match;
+  match: MatchView;
   now: number;
-  joinedMatchId: string | null;
+  joinedGameId: string | null;
   featured?: boolean;
 }) {
-  const youreIn = joinedMatchId === match.id;
-  const lockedOut = !!joinedMatchId && !youreIn;
-  const live = match.status === "live";
+  const youreIn = joinedGameId === match.id;
+  const lockedOut = !!joinedGameId && !youreIn;
+  const live = match.bucket === "live";
+  const ended = match.bucket === "ended";
 
-  const countdown =
-    match.status === "upcoming"
-      ? `Starts in ${formatDelta(match.startsAt - now)}`
-      : live
-        ? `Ends in ${formatDelta(match.endsAt - now)}`
-        : "Ended";
+  const countdown = live
+    ? match.endsAt
+      ? `Ends in ${formatDelta(match.endsAt - now)}`
+      : "Live"
+    : ended
+      ? "Ended"
+      : "Open lobby";
 
   return (
     <Link href={`/match/${match.id}`} className="block transition active:scale-[0.99]">
@@ -53,8 +55,8 @@ export function MatchCard({
         {/* stats */}
         <div className="mt-4 flex items-end gap-7">
           <Metric value={usd(match.prizePoolUsd)} label="Prize pool" accent />
-          <Metric value={usd(match.entryFeeUsd)} label="Entry" />
-          <Metric value={`${match.playersJoined}/${match.maxPlayers}`} label="Players" dim />
+          <Metric value={usd(match.entryUsd)} label="Entry" />
+          <Metric value={`${match.playerCount}/${match.maxPlayers}`} label="Players" dim />
         </div>
 
         <div className="mt-4 h-px w-full bg-[color:var(--color-line)]" />
@@ -62,15 +64,14 @@ export function MatchCard({
         {/* footer: countdown + status */}
         <div className="mt-4 flex items-center justify-between">
           <span className="inline-flex items-center gap-1.5 text-[13px] text-muted">
-            <Clock
-              className="h-4 w-4"
-              style={{ color: live ? "var(--color-loss)" : "var(--color-lime)" }}
-            />
+            <Clock className="h-4 w-4" style={{ color: live ? "var(--color-loss)" : "var(--color-lime)" }} />
             {countdown}
-            <span className="ml-1 inline-flex items-center gap-1 text-[12px]">
-              <span className="pulse-dot inline-block h-1.5 w-1.5 rounded-full bg-[color:var(--color-profit)]" />
-              {match.onlineNow}
-            </span>
+            {match.playerCount > 0 && (
+              <span className="ml-1 inline-flex items-center gap-1 text-[12px]">
+                <span className="pulse-dot inline-block h-1.5 w-1.5 rounded-full bg-[color:var(--color-profit)]" />
+                {match.playerCount}
+              </span>
+            )}
           </span>
           {youreIn ? (
             <Status kind="registered" />

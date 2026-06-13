@@ -25,6 +25,10 @@ export const joinGameSchema = z.object({
   strategyPrompt: strategyPrompt.optional(),
 });
 
+export const listGamesQuerySchema = z.object({
+  status: z.enum(['open', 'live', 'all']).default('open'),
+});
+
 export const startGameSchema = z.object({
   force: z.boolean().optional(),
 });
