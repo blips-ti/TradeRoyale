@@ -55,12 +55,12 @@ export function PnlChartView({
               d={toPath(s.points)}
               fill="none"
               stroke={s.color}
-              strokeWidth={s.you ? 3 : 1.5}
-              strokeOpacity={s.you ? 1 : 0.5}
+              strokeWidth={s.you ? 3 : 2}
+              strokeOpacity={s.you ? 1 : 0.9}
               strokeLinejoin="round"
               strokeLinecap="round"
             />
-            <circle cx={xt(last.t)} cy={yv(last.v)} r={s.you ? 3.5 : 2} fill={s.color} fillOpacity={s.you ? 1 : 0.65} />
+            <circle cx={xt(last.t)} cy={yv(last.v)} r={s.you ? 3.5 : 2.5} fill={s.color} fillOpacity={s.you ? 1 : 0.95} />
           </g>
         );
       })}
