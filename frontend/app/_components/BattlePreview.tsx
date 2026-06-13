@@ -110,9 +110,14 @@ function MiniChart() {
 }
 
 export function BattlePreview() {
-  const [feed, setFeed] = useState<{ id: number; from: Tok; to: Tok; pct: number }[]>([
-    { id: -1, from: "USDC", to: "WETH", pct: 2.1 },
-  ]);
+  // Seed with 3 rows so the feed never changes height (no reflow/flicker as swaps cycle).
+  const [feed, setFeed] = useState<{ id: number; from: Tok; to: Tok; pct: number }[]>(() =>
+    [
+      { from: "USDC" as Tok, to: "WETH" as Tok, pct: 2.1 },
+      { from: "WETH" as Tok, to: "cbBTC" as Tok, pct: -0.7 },
+      { from: "cbBTC" as Tok, to: "AERO" as Tok, pct: 3.4 },
+    ].map((s, i) => ({ id: -3 + i, ...s })),
+  );
   const [nav, setNav] = useState(1284);
   const [tick, setTick] = useState(0);
 
@@ -129,7 +134,7 @@ export function BattlePreview() {
   }, []);
 
   return (
-    <div className="relative mx-auto w-full max-w-[20rem]">
+    <div className="relative w-full">
       {/* lime glow behind the device */}
       <div className="pointer-events-none absolute inset-0 -z-10 rounded-[2rem] bg-[color:var(--color-lime)] opacity-10 blur-2xl" />
 
@@ -174,8 +179,8 @@ export function BattlePreview() {
               <MiniChart />
             </div>
 
-            {/* live swap feed */}
-            <div className="mt-3 flex flex-col gap-1.5">
+            {/* live swap feed — fixed height + clipped so it never reflows the card */}
+            <div className="mt-3 flex h-[7.5rem] flex-col gap-1.5 overflow-hidden">
               <AnimatePresence initial={false}>
                 {feed.map((s) => (
                   <motion.div
