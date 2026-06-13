@@ -1,3 +1,5 @@
+import type { BetaMessage } from '@anthropic-ai/sdk/resources/beta/messages';
+
 import { env } from '../env.js';
 import type { Game, Player, Trade } from '../domain/types.js';
 import { TradeRepository } from '../repositories/tradeRepository.js';
@@ -99,11 +101,27 @@ export class TradingAgent {
     });
 
     const client = getAnthropicClient();
-    // The signal is threaded into the tool-runner so the buzzer/shutdown aborts an in-flight turn.
-    const runner = client.beta.messages.toolRunner(params, signal ? { signal } : undefined);
-    // Tell the arena the agent is reasoning now (drives the live "thinking…" indicator).
+    // stream:true so the runner yields a BetaMessageStream per turn — we relay token-by-token
+    // text/thinking deltas and tool calls to the arena, so the agent visibly types + acts live.
+    const runner = client.beta.messages.toolRunner(
+      { ...params, stream: true },
+      signal ? { signal } : undefined,
+    );
     this.hub.broadcast('agent_thinking', game.id, { playerId: player.id });
-    const finalMessage = await runner.runUntilDone();
+    let finalMessage: BetaMessage | undefined;
+    for await (const stream of runner) {
+      stream.on('text', (delta) => this.streamDelta(game.id, player.id, delta));
+      stream.on('thinking', (delta) => this.streamDelta(game.id, player.id, delta));
+      stream.on('contentBlock', (block) => {
+        if (block.type === 'tool_use') {
+          this.hub.broadcast('agent_log', game.id, { playerId: player.id, kind: 'tool', tool: block.name });
+        }
+      });
+      finalMessage = await stream.finalMessage();
+      // End of this assistant turn — the arena finalizes the current streaming bubble.
+      this.hub.broadcast('agent_log', game.id, { playerId: player.id, kind: 'turn_end' });
+    }
+    if (!finalMessage) throw new Error('Agent produced no messages');
     const summary = this.extractSummary(finalMessage.content);
     this.hub.broadcast('agent_update', game.id, { playerId: player.id, summary });
     return {
@@ -112,6 +130,11 @@ export class TradingAgent {
       touchedTokens: [...touchedTokens],
       requestedWaitSeconds: waitState.requestedSeconds,
     };
+  }
+
+  // Relay a token delta of the agent's reasoning to the arena (assembled into a typing bubble).
+  private streamDelta(gameId: string, playerId: string, text: string): void {
+    if (text) this.hub.broadcast('agent_log', gameId, { playerId, kind: 'reasoning_delta', text });
   }
 
   private extractSummary(content: Array<{ type: string; text?: string }>): string {

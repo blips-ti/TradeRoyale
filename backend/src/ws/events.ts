@@ -7,6 +7,8 @@ export type GameEventType =
   | 'funds_released'
   // Agent started a turn (LLM is reasoning) — drives the "thinking…" indicator in the arena.
   | 'agent_thinking'
+  // Live step of the agent's turn — a reasoning chunk or a tool call (LI.FI/portfolio/swap).
+  | 'agent_log'
   | 'agent_update'
   | 'trade_executed'
   // A swap/contract-call the agent attempted reverted or couldn't route — surfaced in the arena.

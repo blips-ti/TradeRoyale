@@ -34,6 +34,24 @@ function fmtTokenAmount(base: string, decimals: number) {
   return n.toLocaleString("en-US", { maximumFractionDigits: n !== 0 && Math.abs(n) < 1 ? 6 : 4 });
 }
 
+// A Base USDC logo for the seed holding before Octav's real imgSmall arrives.
+const USDC_LOGO =
+  "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/base/assets/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913/logo.png";
+
+// Friendly label for an agent tool call, so the live feed reads like real activity.
+const TOOL_LABEL: Record<string, string> = {
+  get_portfolio: "📊 Reading portfolio",
+  get_market: "🔍 Checking the market",
+  execute_swap: "💱 Executing a swap",
+  execute_protocol_action: "⚙️ Protocol action",
+  wait: "⏳ Pacing the next move",
+};
+function toolLabel(name: string): string {
+  if (TOOL_LABEL[name]) return TOOL_LABEL[name];
+  if (/lifi|quote|route|bridge|swap/i.test(name)) return `🌐 LI.FI · ${name}`;
+  return `⚙️ ${name}`;
+}
+
 export default function LivePage() {
   const { ready, authenticated, user } = useAuth();
   const router = useRouter();
@@ -58,6 +76,8 @@ export default function LivePage() {
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [thinking, setThinking] = useState(false);
+  const [streamText, setStreamText] = useState(""); // the agent's in-progress (typing) reasoning
+  const streamRef = useRef("");
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [settled, setSettled] = useState<{
@@ -89,10 +109,31 @@ export default function LivePage() {
       if (e.type === "agent_thinking" && e.data.playerId === playerId) {
         setThinking(true);
       }
+      if (e.type === "agent_log" && e.data.playerId === playerId) {
+        setThinking(false);
+        const kind = e.data.kind;
+        if (kind === "reasoning_delta") {
+          streamRef.current += String(e.data.text ?? "");
+          setStreamText(streamRef.current);
+        } else {
+          // tool call or end of turn — flush the in-progress reasoning into a committed bubble.
+          const done = streamRef.current.trim();
+          streamRef.current = "";
+          setStreamText("");
+          setMessages((m) => [
+            ...m,
+            ...(done ? [{ role: "agent" as const, text: done }] : []),
+            ...(kind === "tool" ? [{ role: "system" as const, text: toolLabel(String(e.data.tool ?? "")) }] : []),
+          ]);
+        }
+      }
       if (e.type === "agent_update" && e.data.playerId === playerId) {
         setThinking(false);
-        const summary = String(e.data.summary ?? "").trim();
-        if (summary) setMessages((m) => [...m, { role: "agent", text: summary }]);
+        // The reasoning already streamed via agent_log; just flush any trailing buffer.
+        const done = streamRef.current.trim();
+        streamRef.current = "";
+        setStreamText("");
+        if (done) setMessages((m) => [...m, { role: "agent", text: done }]);
       }
       if (e.type === "trade_executed" && e.data.playerId === playerId) {
         const f = tokenMeta(String(e.data.fromToken ?? ""));
@@ -157,7 +198,7 @@ export default function LivePage() {
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, thinking]);
+  }, [messages, thinking, streamText]);
 
   // Safety net: never leave the "thinking…" indicator stuck if no agent_update arrives.
   useEffect(() => {
@@ -215,7 +256,7 @@ export default function LivePage() {
     holdings.length > 0
       ? holdings
       : live && playerId
-        ? [{ symbol: "USDC", name: "USD Coin", valueUsd: String(myNav), balance: String(myNav), priceUsd: "1", contract: game.entryToken, chain: "base" }]
+        ? [{ symbol: "USDC", name: "USD Coin", valueUsd: String(myNav), balance: String(myNav), priceUsd: "1", contract: game.entryToken, chain: "base", image: USDC_LOGO }]
         : [];
 
   const send = async () => {
@@ -316,14 +357,7 @@ export default function LivePage() {
                   key={`${h.chain}:${h.contract}`}
                   className="flex shrink-0 items-center gap-2 rounded-pill border border-[color:var(--color-line)] bg-[color:var(--color-surface-2)] px-2.5 py-1.5"
                 >
-                  {h.image ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={h.image} alt={h.symbol} className="h-5 w-5 rounded-full" />
-                  ) : (
-                    <span className="grid h-5 w-5 place-items-center rounded-full bg-[color:var(--color-surface)] text-[8px] font-bold text-muted">
-                      {h.symbol.slice(0, 3).toUpperCase()}
-                    </span>
-                  )}
+                  <TokenLogo src={h.image} symbol={h.symbol} />
                   <span className="text-[12px] font-semibold uppercase text-fg">{h.symbol || "—"}</span>
                   <span className="font-mono text-[12px] text-muted">{usd(Number(h.valueUsd) || 0)}</span>
                 </div>
@@ -407,7 +441,15 @@ export default function LivePage() {
                 </div>
               </div>
             ))}
-            {thinking && (
+            {streamText && (
+              <div className="flex justify-start">
+                <div className="max-w-[80%] rounded-2xl bg-[color:var(--color-surface-2)] px-3 py-2 text-[13px] leading-snug text-fg">
+                  {streamText}
+                  <span className="ml-0.5 inline-block animate-pulse text-[color:var(--color-lime)]">▍</span>
+                </div>
+              </div>
+            )}
+            {thinking && !streamText && (
               <div className="flex items-center gap-1.5 px-2 py-1 text-[12px] text-muted">
                 {[0, 1, 2].map((i) => (
                   <motion.span
@@ -417,7 +459,7 @@ export default function LivePage() {
                     transition={{ duration: 1, repeat: Infinity, delay: i * 0.2 }}
                   />
                 ))}
-                <span className="ml-1">your agent is thinking…</span>
+                <span className="ml-1">your agent is connecting…</span>
               </div>
             )}
           </div>
@@ -451,6 +493,22 @@ export default function LivePage() {
         </p>
       </div>
     </div>
+  );
+}
+
+// Token logo from the Octav portfolio (imgSmall); falls back to a symbol badge if it 404s.
+function TokenLogo({ src, symbol }: { src?: string; symbol: string }) {
+  const [failed, setFailed] = useState(false);
+  if (src && !failed) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img src={src} alt={symbol} onError={() => setFailed(true)} className="h-5 w-5 rounded-full" />
+    );
+  }
+  return (
+    <span className="grid h-5 w-5 place-items-center rounded-full bg-[color:var(--color-surface)] text-[8px] font-bold text-muted">
+      {(symbol || "?").slice(0, 3).toUpperCase()}
+    </span>
   );
 }
 

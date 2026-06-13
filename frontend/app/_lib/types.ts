@@ -106,6 +106,7 @@ export type GameEventType =
   | "game_ended"
   | "funds_released"
   | "agent_thinking"
+  | "agent_log"
   | "agent_update"
   | "trade_executed"
   | "trade_failed"
