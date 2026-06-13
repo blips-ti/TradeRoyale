@@ -1,4 +1,5 @@
 import { createPublicClient, erc20Abi, http, type PublicClient } from 'viem';
+import { base, baseSepolia } from 'viem/chains';
 
 import { env } from '../env.js';
 
@@ -20,10 +21,12 @@ export class ViemReader {
     return ViemReader.instance;
   }
 
-  // Lazy so boot never depends on RPC reachability.
+  // Lazy so boot never depends on RPC reachability. The chain is required so viem knows the
+  // multicall3 address (getErc20Balances uses multicall) and the native currency/explorer.
   private getClient(): PublicClient {
     if (this.client) return this.client;
-    this.client = createPublicClient({ transport: http(env.BASE_RPC_URL) });
+    const chain = env.CHAIN_ID === baseSepolia.id ? baseSepolia : base;
+    this.client = createPublicClient({ chain, transport: http(env.BASE_RPC_URL) }) as PublicClient;
     return this.client;
   }
 
