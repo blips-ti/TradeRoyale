@@ -19,10 +19,43 @@ interface OctavNavResponse {
   conversionPrice?: number | string;
 }
 
-// Octav /v1/portfolio returns an array (one entry per address); `networth` is the total USD value.
+// One plain wallet token holding (assetByProtocols.wallet.chains[*].protocolPositions.WALLET.assets[]).
+interface OctavAsset {
+  symbol?: string;
+  name?: string;
+  value?: string;
+  balance?: string;
+  price?: string;
+  contract?: string;
+  chainKey?: string;
+  imgSmall?: string;
+  imgLarge?: string;
+}
+interface OctavChainPositions {
+  protocolPositions?: { WALLET?: { assets?: OctavAsset[] } };
+}
 interface OctavPortfolioEntry {
   address?: string;
   networth?: string;
+  assetByProtocols?: { wallet?: { chains?: Record<string, OctavChainPositions> } };
+}
+
+// A token the player holds, for the arena wallet panel.
+export interface Holding {
+  symbol: string;
+  name: string;
+  valueUsd: string;
+  balance: string;
+  priceUsd: string;
+  contract: string;
+  chain: string;
+  image?: string;
+}
+
+export interface PortfolioResult {
+  navUsd: string;
+  holdings: Holding[];
+  raw: unknown;
 }
 
 // Sole adapter for the Octav public NAV API (api.octav.fi/v1). Used at settlement as an
@@ -65,13 +98,18 @@ export class OctavService {
     return { navUsd: this.normalizeNav(body.nav), raw: body };
   }
 
-  // GET /v1/portfolio?addresses=<address>&waitForSync=true — forces a fresh sync and returns
-  // the address's total USD net worth. Used by the live NAV sampler (the arena chart/standings).
-  async getPortfolioNav(address: string): Promise<NavResult> {
+  // GET /v1/portfolio?addresses=<address>&waitForSync=true&includeImages=true — forces a fresh
+  // sync and returns the total USD net worth + the wallet's token holdings (with logos). Used by
+  // the live NAV sampler for the arena chart, standings, and wallet panel.
+  async getPortfolio(address: string): Promise<PortfolioResult> {
     if (!this.apiKey) {
       throw new MissingOctavCredentialsError("OCTAV_API_KEY is not set");
     }
-    const params = new URLSearchParams({ addresses: address, waitForSync: "true" });
+    const params = new URLSearchParams({
+      addresses: address,
+      waitForSync: "true",
+      includeImages: "true",
+    });
     let response: Response;
     try {
       response = await fetch(`${this.baseUrl}/portfolio?${params.toString()}`, {
@@ -87,7 +125,34 @@ export class OctavService {
     }
     const body = (await response.json()) as OctavPortfolioEntry[];
     const entry = Array.isArray(body) ? body[0] : undefined;
-    return { navUsd: this.normalizeNav(entry?.networth), raw: body };
+    return { navUsd: this.normalizeNav(entry?.networth), holdings: this.parseHoldings(entry), raw: body };
+  }
+
+  // Convenience for callers that only need NAV (e.g. the diagnostic).
+  async getPortfolioNav(address: string): Promise<NavResult> {
+    const { navUsd, raw } = await this.getPortfolio(address);
+    return { navUsd, raw };
+  }
+
+  // Flatten the plain wallet tokens across chains, biggest USD value first.
+  private parseHoldings(entry: OctavPortfolioEntry | undefined): Holding[] {
+    const chains = entry?.assetByProtocols?.wallet?.chains ?? {};
+    const out: Holding[] = [];
+    for (const [chainKey, chain] of Object.entries(chains)) {
+      for (const asset of chain.protocolPositions?.WALLET?.assets ?? []) {
+        out.push({
+          symbol: asset.symbol ?? "",
+          name: asset.name ?? "",
+          valueUsd: asset.value ?? "0",
+          balance: asset.balance ?? "0",
+          priceUsd: asset.price ?? "0",
+          contract: asset.contract ?? "",
+          chain: asset.chainKey ?? chainKey,
+          image: asset.imgSmall ?? asset.imgLarge,
+        });
+      }
+    }
+    return out.sort((a, b) => Number(b.valueUsd) - Number(a.valueUsd));
   }
 
   // nav arrives as a JSON number; keep it exact as a decimal string (no float retention).

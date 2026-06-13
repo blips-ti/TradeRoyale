@@ -9,7 +9,7 @@ import { useGame } from "@/app/_lib/store";
 import { api } from "@/app/_lib/api";
 import { useMatchView } from "@/app/_lib/useMatchView";
 import { useGameSocket } from "@/app/_lib/useGameSocket";
-import type { GameEvent, PlayerResult, PublicPlayer } from "@/app/_lib/types";
+import type { GameEvent, Holding, PlayerResult, PublicPlayer } from "@/app/_lib/types";
 import { usd } from "@/app/_lib/format";
 import { baseUnitsToNumber } from "@/app/_lib/units";
 import { formatDelta, useNow } from "@/app/_lib/useNow";
@@ -52,9 +52,10 @@ export default function LivePage() {
 
   const entryUsd = game ? baseUnitsToNumber(game.entryAmount) : 0;
 
-  // Live NAV per player (USD) + PnL% history, seeded at the entry amount / 0%.
+  // Live NAV per player (USD), a time-stamped NAV history for the chart, and your wallet tokens.
   const [navByPlayer, setNavByPlayer] = useState<Record<string, number>>({});
-  const [pnlSeries, setPnlSeries] = useState<Record<string, number[]>>({});
+  const [navHistory, setNavHistory] = useState<Record<string, { t: number; nav: number }[]>>({});
+  const [holdings, setHoldings] = useState<Holding[]>([]);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [thinking, setThinking] = useState(false);
   const [draft, setDraft] = useState("");
@@ -80,8 +81,10 @@ export default function LivePage() {
         const navUsd = Number(e.data.navUsd ?? 0);
         if (!pid || !Number.isFinite(navUsd)) return;
         setNavByPlayer((prev) => ({ ...prev, [pid]: navUsd }));
-        const pnl = entryUsd > 0 ? ((navUsd - entryUsd) / entryUsd) * 100 : 0;
-        setPnlSeries((prev) => ({ ...prev, [pid]: [...(prev[pid] ?? [0]), pnl].slice(-60) }));
+        setNavHistory((prev) => ({ ...prev, [pid]: [...(prev[pid] ?? []), { t: e.ts, nav: navUsd }].slice(-120) }));
+        if (pid === playerId && Array.isArray(e.data.holdings)) {
+          setHoldings(e.data.holdings as Holding[]);
+        }
       }
       if (e.type === "agent_thinking" && e.data.playerId === playerId) {
         setThinking(true);
@@ -103,6 +106,13 @@ export default function LivePage() {
             txHash: e.data.txHash ? String(e.data.txHash) : undefined,
           },
         ]);
+      }
+      if (e.type === "trade_failed" && e.data.playerId === playerId) {
+        setThinking(false);
+        const f = tokenMeta(String(e.data.fromToken ?? ""));
+        const t = tokenMeta(String(e.data.toToken ?? ""));
+        const reason = String(e.data.reason ?? "trade reverted");
+        setMessages((m) => [...m, { role: "system", text: `⚠ ${f.symbol} → ${t.symbol} failed: ${reason}` }]);
       }
       if (e.type === "game_ended") {
         const results = (e.data.results as PlayerResult[] | undefined) ?? [];
@@ -181,13 +191,24 @@ export default function LivePage() {
     .sort((a, b) => b.nav - a.nav);
   const myRank = standings.findIndex((s) => s.player.id === playerId) + 1;
 
-  const series: Series[] = standings.map((s, i) => ({
-    id: s.player.id,
-    name: s.player.displayName,
-    you: s.player.id === playerId,
-    color: s.player.id === playerId ? "#C5F72B" : COLORS[(i + 1) % COLORS.length],
-    points: pnlSeries[s.player.id] ?? [0],
-  }));
+  // Time-based chart domain: the whole match window. The line is seeded at the start (0%), the
+  // real Octav snapshots, then a trailing point at "now" holding the last NAV so it scrolls live.
+  const startedAtMs = game.startedAt ? Date.parse(game.startedAt) : view.endsAt ? view.endsAt - 5 * 60_000 : now;
+  const endsAtMs = view.endsAt ?? startedAtMs + 5 * 60_000;
+  const nowClamped = Math.min(now, endsAtMs);
+  const series: Series[] = standings.map((s, i) => {
+    const hist = navHistory[s.player.id] ?? [];
+    const lastNav = hist.length ? hist[hist.length - 1].nav : entryUsd;
+    const raw = [{ t: startedAtMs, nav: entryUsd }, ...hist, { t: nowClamped, nav: lastNav }];
+    const points = raw.map((h) => ({ t: h.t, v: entryUsd > 0 ? ((h.nav - entryUsd) / entryUsd) * 100 : 0 }));
+    return {
+      id: s.player.id,
+      name: s.player.displayName,
+      you: s.player.id === playerId,
+      color: s.player.id === playerId ? "#C5F72B" : COLORS[(i + 1) % COLORS.length],
+      points,
+    };
+  });
 
   const send = async () => {
     const text = draft.trim();
@@ -273,9 +294,35 @@ export default function LivePage() {
             </div>
           </div>
           <div className="mt-3">
-            <PnlChartView series={series} height={150} />
+            <PnlChartView series={series} xMin={startedAtMs} xMax={endsAtMs} height={150} />
           </div>
         </div>
+
+        {/* your wallet (Octav holdings) */}
+        {holdings.length > 0 && (
+          <div className="rounded-card border border-[color:var(--color-line)] bg-[color:var(--color-surface)] p-3">
+            <p className="px-1 pb-2 text-[11px] uppercase tracking-[0.14em] text-muted">Your wallet</p>
+            <div className="flex gap-2 overflow-x-auto no-scrollbar">
+              {holdings.map((h) => (
+                <div
+                  key={`${h.chain}:${h.contract}`}
+                  className="flex shrink-0 items-center gap-2 rounded-pill border border-[color:var(--color-line)] bg-[color:var(--color-surface-2)] px-2.5 py-1.5"
+                >
+                  {h.image ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={h.image} alt={h.symbol} className="h-5 w-5 rounded-full" />
+                  ) : (
+                    <span className="grid h-5 w-5 place-items-center rounded-full bg-[color:var(--color-surface)] text-[8px] font-bold text-muted">
+                      {h.symbol.slice(0, 3).toUpperCase()}
+                    </span>
+                  )}
+                  <span className="text-[12px] font-semibold uppercase text-fg">{h.symbol || "—"}</span>
+                  <span className="font-mono text-[12px] text-muted">{usd(Number(h.valueUsd) || 0)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* standings */}
         <div className="flex gap-2 overflow-x-auto no-scrollbar">

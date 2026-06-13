@@ -269,6 +269,13 @@ async function runExecuteSwap(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logger.warn({ playerId: context.player.id, err: message }, '[agent] execute_swap failed');
+    deps.hub.broadcast('trade_failed', context.game.id, {
+      playerId: context.player.id,
+      kind: 'swap',
+      fromToken: args.fromToken,
+      toToken: args.toToken,
+      reason: message,
+    });
     return toolError(`Swap failed: ${message}`);
   }
 }
@@ -325,6 +332,13 @@ async function runExecuteProtocolAction(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logger.warn({ playerId: context.player.id, err: message }, '[agent] execute_protocol_action failed');
+    deps.hub.broadcast('trade_failed', context.game.id, {
+      playerId: context.player.id,
+      kind: 'contract_call',
+      fromToken: args.fromToken,
+      toToken: args.toToken,
+      reason: message,
+    });
     return toolError(`Protocol action failed: ${message}`);
   }
 }

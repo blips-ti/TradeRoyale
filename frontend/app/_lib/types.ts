@@ -108,6 +108,7 @@ export type GameEventType =
   | "agent_thinking"
   | "agent_update"
   | "trade_executed"
+  | "trade_failed"
   | "player_liquidated"
   // ⬇ proposed BE addition for the live NAV chart (see integration plan §6)
   | "portfolio_update";
@@ -117,4 +118,16 @@ export type GameEvent = {
   gameId: string;
   ts: number;
   data: Record<string, unknown>;
+};
+
+/** A token the player holds (from the Octav portfolio, broadcast on portfolio_update). */
+export type Holding = {
+  symbol: string;
+  name: string;
+  valueUsd: string;
+  balance: string;
+  priceUsd: string;
+  contract: string;
+  chain: string;
+  image?: string;
 };

@@ -51,8 +51,8 @@ export class NavWatcher {
 
   private async samplePlayer(gameId: string, player: Player): Promise<void> {
     try {
-      const { navUsd } = await this.octav.getPortfolioNav(player.privyWalletAddress as string);
-      this.hub.broadcast("portfolio_update", gameId, { playerId: player.id, navUsd });
+      const { navUsd, holdings } = await this.octav.getPortfolio(player.privyWalletAddress as string);
+      this.hub.broadcast("portfolio_update", gameId, { playerId: player.id, navUsd, holdings });
     } catch (error) {
       logger.warn({ err: error, playerId: player.id, gameId }, "[navWatcher] nav sample failed");
     }

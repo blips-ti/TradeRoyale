@@ -1,47 +1,54 @@
 "use client";
 
+export type SeriesPoint = { t: number; v: number }; // t = ms timestamp, v = pnl %
+
 export type Series = {
   id: string;
   name: string;
   color: string;
   you?: boolean;
-  points: number[]; // pnl % over time
+  points: SeriesPoint[];
 };
 
-/** Render-only Polymarket-style multi-line chart. Data comes from real NAV events. */
-export function PnlChartView({ series, height = 200 }: { series: Series[]; height?: number }) {
-  const all = series.flatMap((s) => s.points);
-  const min = Math.min(-5, ...all);
-  const max = Math.max(5, ...all);
+/** Render-only multi-line chart with a TIME x-axis [xMin..xMax]. Re-render as `xMax` (now)
+    advances and the line tips track the latest value, so it scrolls live with the clock. */
+export function PnlChartView({
+  series,
+  xMin,
+  xMax,
+  height = 200,
+}: {
+  series: Series[];
+  xMin: number;
+  xMax: number;
+  height?: number;
+}) {
+  const allV = series.flatMap((s) => s.points.map((p) => p.v));
+  const min = Math.min(-1, ...allV);
+  const max = Math.max(1, ...allV);
   const W = 320;
   const H = height;
   const pad = 6;
+  const span = Math.max(xMax - xMin, 1);
 
-  const xy = (p: number, i: number, n: number) => {
-    const x = pad + (i / Math.max(n, 1)) * (W - pad * 2);
-    const y = pad + (1 - (p - min) / (max - min || 1)) * (H - pad * 2);
-    return [x, y] as const;
+  const xt = (t: number) => {
+    const x = pad + ((t - xMin) / span) * (W - pad * 2);
+    return Math.max(pad, Math.min(W - pad, x));
   };
+  const yv = (v: number) => pad + (1 - (v - min) / (max - min || 1)) * (H - pad * 2);
 
-  const toPath = (pts: number[]) => {
-    const n = pts.length - 1;
-    return pts
-      .map((p, i) => {
-        const [x, y] = xy(p, i, n);
-        return `${i === 0 ? "M" : "L"}${x.toFixed(1)} ${y.toFixed(1)}`;
-      })
-      .join(" ");
-  };
+  const toPath = (pts: SeriesPoint[]) =>
+    pts.map((p, i) => `${i === 0 ? "M" : "L"}${xt(p.t).toFixed(1)} ${yv(p.v).toFixed(1)}`).join(" ");
 
-  const zeroY = pad + (1 - (0 - min) / (max - min || 1)) * (H - pad * 2);
+  const zeroY = yv(0);
   const ordered = [...series].sort((a, b) => (a.you ? 1 : 0) - (b.you ? 1 : 0));
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: H }} preserveAspectRatio="none">
       <line x1={pad} x2={W - pad} y1={zeroY} y2={zeroY} stroke="rgba(255,255,255,.12)" strokeWidth="1" strokeDasharray="3 4" />
       {ordered.map((s) => {
-        const n = s.points.length - 1;
-        const [lx, ly] = xy(s.points[s.points.length - 1] ?? 0, n, n);
+        if (s.points.length === 0) return null;
+        const last = s.points[s.points.length - 1];
         return (
           <g key={s.id}>
             <path
@@ -53,7 +60,7 @@ export function PnlChartView({ series, height = 200 }: { series: Series[]; heigh
               strokeLinejoin="round"
               strokeLinecap="round"
             />
-            <circle cx={lx} cy={ly} r={s.you ? 3.5 : 2} fill={s.color} fillOpacity={s.you ? 1 : 0.65} />
+            <circle cx={xt(last.t)} cy={yv(last.v)} r={s.you ? 3.5 : 2} fill={s.color} fillOpacity={s.you ? 1 : 0.65} />
           </g>
         );
       })}

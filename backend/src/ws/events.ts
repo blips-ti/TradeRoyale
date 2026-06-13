@@ -9,6 +9,8 @@ export type GameEventType =
   | 'agent_thinking'
   | 'agent_update'
   | 'trade_executed'
+  // A swap/contract-call the agent attempted reverted or couldn't route — surfaced in the arena.
+  | 'trade_failed'
   | 'player_liquidated'
   // Winner-take-all payout completed: every loser's USDC consolidated into the winner's wallet.
   | 'prize_paid'
