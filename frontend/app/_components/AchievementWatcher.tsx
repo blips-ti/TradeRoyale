@@ -12,24 +12,23 @@ import { AchievementUnlock } from "./AchievementUnlock";
  * unlock endpoint — so a celebration fires the FIRST time ever, never again on reconnect.
  */
 export function AchievementWatcher() {
-  const { authenticated, user } = useAuth();
+  const { authenticated } = useAuth();
   const { joinedMatchId, agent } = useGame();
-  const address = user?.address ?? null;
   const { loaded, queue, load, tryUnlock, dequeue, reset } = useAchievements();
 
-  // Load (or clear) the ledger when the connected wallet changes.
+  // Load (or clear) the ledger when auth state changes (identity rides the token).
   useEffect(() => {
-    if (address) load(address);
+    if (authenticated) load();
     else reset();
-  }, [address, load, reset]);
+  }, [authenticated, load, reset]);
 
   // Fire condition-based unlocks once the ledger is loaded.
   useEffect(() => {
-    if (!loaded || !address) return;
-    if (authenticated) tryUnlock(address, "connect");
-    if (joinedMatchId) tryUnlock(address, "join");
-    if (agent) tryUnlock(address, "agent");
-  }, [loaded, address, authenticated, joinedMatchId, agent, tryUnlock]);
+    if (!loaded || !authenticated) return;
+    tryUnlock("connect");
+    if (joinedMatchId) tryUnlock("join");
+    if (agent) tryUnlock("agent");
+  }, [loaded, authenticated, joinedMatchId, agent, tryUnlock]);
 
   return <AchievementUnlock achievement={queue[0] ?? null} onDismiss={dequeue} />;
 }

@@ -12,6 +12,7 @@
 import * as React from "react";
 import { PrivyProvider, usePrivy } from "@privy-io/react-auth";
 import { handleFor } from "./format";
+import { setAuthTokenGetter } from "./api";
 
 export type AuthUser = {
   id: string;
@@ -55,7 +56,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 }
 
 function PrivyBridge({ children }: { children: React.ReactNode }) {
-  const { ready, authenticated, user, login, logout } = usePrivy();
+  const { ready, authenticated, user, login, logout, getAccessToken } = usePrivy();
+
+  // Hand the API client a way to fetch the live access token for Authorization headers.
+  React.useEffect(() => {
+    setAuthTokenGetter(getAccessToken);
+  }, [getAccessToken]);
 
   const value = React.useMemo<AuthCtx>(() => {
     const address =

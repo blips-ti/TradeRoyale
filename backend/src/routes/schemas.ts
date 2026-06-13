@@ -19,12 +19,10 @@ export const createGameSchema = z.object({
 
 const MAX_STRATEGY_PROMPT_CHARS = 2000;
 const strategyPrompt = z.string().trim().min(1).max(MAX_STRATEGY_PROMPT_CHARS);
-const evmAddress = z.string().regex(/^0x[0-9a-fA-F]{40}$/, 'must be a 20-byte hex address');
 
 export const joinGameSchema = z.object({
   displayName: z.string().trim().min(1).max(40),
   strategyPrompt: strategyPrompt.optional(),
-  ownerAddress: evmAddress.optional(),
 });
 
 export const listGamesQuerySchema = z.object({

@@ -13,8 +13,8 @@ type AchievementsState = {
   /** ids we've already POSTed this session (avoids redundant calls) */
   attempted: Set<string>;
 
-  load: (ownerAddress: string) => Promise<void>;
-  tryUnlock: (ownerAddress: string, id: string) => Promise<void>;
+  load: () => Promise<void>;
+  tryUnlock: (id: string) => Promise<void>;
   dequeue: () => void;
   reset: () => void;
 };
@@ -25,21 +25,21 @@ export const useAchievements = create<AchievementsState>((set, get) => ({
   queue: [],
   attempted: new Set(),
 
-  load: async (ownerAddress) => {
+  load: async () => {
     try {
-      const state = await api.getAchievements(ownerAddress);
+      const state = await api.getAchievements();
       set({ unlocked: new Set(state.unlocked), loaded: true });
     } catch {
       set({ loaded: true }); // backend unreachable — degrade quietly
     }
   },
 
-  tryUnlock: async (ownerAddress, id) => {
+  tryUnlock: async (id) => {
     const { unlocked, attempted } = get();
     if (unlocked.has(id) || attempted.has(id)) return;
     set({ attempted: new Set(attempted).add(id) });
     try {
-      const res = await api.unlockAchievement(ownerAddress, id);
+      const res = await api.unlockAchievement(id);
       set((s) => ({ unlocked: new Set(s.unlocked).add(id) }));
       if (res.newlyUnlocked) {
         const ach = achievementById(id);

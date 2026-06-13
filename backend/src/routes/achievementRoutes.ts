@@ -1,6 +1,7 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 
+import { requireAuth, type AuthVariables } from "../middleware/auth.js";
 import {
   achievementService,
   UnknownAchievementError,
@@ -8,17 +9,19 @@ import {
 } from "../services/achievementService.js";
 import { unlockAchievementSchema } from "./schemas.js";
 
-export function buildAchievementRoutes(service: AchievementService = achievementService): Hono {
-  const router = new Hono();
+export function buildAchievementRoutes(
+  service: AchievementService = achievementService,
+): Hono<{ Variables: AuthVariables }> {
+  const router = new Hono<{ Variables: AuthVariables }>();
 
-  router.get("/:ownerAddress", async (c) => {
-    const state = await service.getState(c.req.param("ownerAddress"));
+  router.get("/me", requireAuth(), async (c) => {
+    const state = await service.getState(c.get("userId"));
     return c.json(state);
   });
 
-  router.post("/:ownerAddress/unlock", zValidator("json", unlockAchievementSchema), async (c) => {
+  router.post("/me/unlock", requireAuth(), zValidator("json", unlockAchievementSchema), async (c) => {
     const { id } = c.req.valid("json");
-    const result = await service.unlock(c.req.param("ownerAddress"), id);
+    const result = await service.unlock(c.get("userId"), id);
     return c.json(result);
   });
 

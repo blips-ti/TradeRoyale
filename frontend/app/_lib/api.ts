@@ -24,10 +24,22 @@ class ApiError extends Error {
   }
 }
 
+// The auth layer registers a getter for the current Privy access token; every request
+// attaches it as a Bearer so the backend can verify + authorize the caller.
+let getAuthToken: () => Promise<string | null> = async () => null;
+export function setAuthTokenGetter(fn: () => Promise<string | null>) {
+  getAuthToken = fn;
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = await getAuthToken().catch(() => null);
   const res = await fetch(`${API_URL}${path}`, {
     ...init,
-    headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
+    headers: {
+      "content-type": "application/json",
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      ...(init?.headers ?? {}),
+    },
   });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
@@ -42,10 +54,10 @@ export const api = {
 
   getGame: (gameId: string) => req<GameWithPlayers>(`/games/${gameId}`),
 
-  // Recover the user's active game + player by wallet address (reconnect / new device).
-  getActive: (ownerAddress: string) => req<ActivePlayerResponse>(`/games/me/${ownerAddress}`),
+  // Recover the authenticated user's active game + player (reconnect / new device).
+  getActive: () => req<ActivePlayerResponse>(`/games/me`),
 
-  joinGame: (gameId: string, body: { displayName: string; strategyPrompt?: string; ownerAddress?: string }) =>
+  joinGame: (gameId: string, body: { displayName: string; strategyPrompt?: string }) =>
     req<JoinResult>(`/games/${gameId}/join`, { method: "POST", body: JSON.stringify(body) }),
 
   setStrategy: (gameId: string, playerId: string, strategyPrompt: string) =>
@@ -62,11 +74,11 @@ export const api = {
   getResults: (gameId: string) =>
     req<{ settlement: Settlement | null }>(`/games/${gameId}/results`).then((r) => r.settlement),
 
-  // Persisted achievements/XP (BE-authoritative; unlock is idempotent).
-  getAchievements: (ownerAddress: string) => req<AchievementState>(`/achievements/${ownerAddress}`),
+  // Persisted achievements/XP for the authenticated user (BE-authoritative; unlock idempotent).
+  getAchievements: () => req<AchievementState>(`/achievements/me`),
 
-  unlockAchievement: (ownerAddress: string, id: string) =>
-    req<UnlockResult>(`/achievements/${ownerAddress}/unlock`, {
+  unlockAchievement: (id: string) =>
+    req<UnlockResult>(`/achievements/me/unlock`, {
       method: "POST",
       body: JSON.stringify({ id }),
     }),

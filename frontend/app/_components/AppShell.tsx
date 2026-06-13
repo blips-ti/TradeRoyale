@@ -24,7 +24,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [menuOpen, setMenuOpen] = useState(false);
 
   // Recover the user's active game/player from the backend on (re)connect.
-  useSessionSync(user?.address);
+  useSessionSync(authenticated);
 
   useEffect(() => {
     init();

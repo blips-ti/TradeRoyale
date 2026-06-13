@@ -3,7 +3,9 @@ import { Hono } from "hono";
 
 import { env } from "../env.js";
 import { toPublicPlayer } from "../domain/types.js";
+import { requireAuth, type AuthVariables } from "../middleware/auth.js";
 import {
+  ForbiddenError,
   GameConflictError,
   GameNotFoundError,
   gameService,
@@ -24,8 +26,8 @@ import {
 export function buildGameRoutes(
   service: GameService = gameService,
   unlink: UnlinkService = unlinkService,
-): Hono {
-  const router = new Hono();
+): Hono<{ Variables: AuthVariables }> {
+  const router = new Hono<{ Variables: AuthVariables }>();
 
   router.post("/", zValidator("json", createGameSchema), async (c) => {
     const body = c.req.valid("json");
@@ -39,10 +41,10 @@ export function buildGameRoutes(
     return c.json({ games });
   });
 
-  // Recover the caller's active game + player by wallet address (reconnect / new device).
+  // Recover the caller's active game + player (reconnect / new device) — by verified Privy id.
   // Static "/me" is matched before the "/:gameId" param route.
-  router.get("/me/:ownerAddress", async (c) => {
-    const active = await service.getActiveForOwner(c.req.param("ownerAddress"));
+  router.get("/me", requireAuth(), async (c) => {
+    const active = await service.getActiveForOwner(c.get("userId"));
     return c.json(active ?? { game: null, player: null });
   });
 
@@ -53,6 +55,7 @@ export function buildGameRoutes(
 
   router.post(
     "/:gameId/join",
+    requireAuth(),
     zValidator("json", joinGameSchema),
     async (c) => {
       const body = c.req.valid("json");
@@ -60,7 +63,7 @@ export function buildGameRoutes(
         gameId: c.req.param("gameId"),
         displayName: body.displayName,
         strategyPrompt: body.strategyPrompt,
-        ownerAddress: body.ownerAddress,
+        ownerId: c.get("userId"),
       });
       return c.json(result, 201);
     },
@@ -68,6 +71,7 @@ export function buildGameRoutes(
 
   router.put(
     "/:gameId/players/:playerId/strategy",
+    requireAuth(),
     zValidator("json", updateStrategySchema),
     async (c) => {
       const body = c.req.valid("json");
@@ -75,6 +79,7 @@ export function buildGameRoutes(
         gameId: c.req.param("gameId"),
         playerId: c.req.param("playerId"),
         strategyPrompt: body.strategyPrompt,
+        ownerId: c.get("userId"),
       });
       return c.json({ player: toPublicPlayer(player) });
     },
@@ -122,4 +127,4 @@ export function buildGameRoutes(
   return router;
 }
 
-export { GameConflictError, GameNotFoundError };
+export { ForbiddenError, GameConflictError, GameNotFoundError };

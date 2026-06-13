@@ -248,7 +248,6 @@ function BuyInSheet({
     try {
       const res = await api.joinGame(gameId, {
         displayName: agentName.trim() || "Agent",
-        ownerAddress: ownerAddress ?? undefined,
       });
       setJoined(res);
       onJoined(res, agentName.trim() || "Agent");

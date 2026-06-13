@@ -28,8 +28,8 @@ export interface JoinGameInput {
   gameId: string;
   displayName: string;
   strategyPrompt?: string;
-  // The joining user's wallet address — links the player to their identity for reconnect.
-  ownerAddress?: string;
+  // The joining user's verified Privy id (DID) — links the player to their identity.
+  ownerId?: string;
 }
 
 export interface ActivePlayer {
@@ -41,6 +41,8 @@ export interface SetStrategyInput {
   gameId: string;
   playerId: string;
   strategyPrompt: string;
+  // Authenticated caller (verified Privy id) — must own the player.
+  ownerId: string;
 }
 
 export interface JoinGameResult {
@@ -67,6 +69,7 @@ export interface GameListItem extends Game {
 
 export class GameConflictError extends Error {}
 export class GameNotFoundError extends Error {}
+export class ForbiddenError extends Error {}
 
 const DEPOSIT_INSTRUCTIONS =
   "Deposit into your own Unlink account, then transfer this exact amount to the unlinkAddress above";
@@ -126,9 +129,9 @@ export class GameService {
     return { game, players: players.map(toPublicPlayer) };
   }
 
-  // The user's current game + player (recover a session by wallet address), or null.
-  async getActiveForOwner(ownerAddress: string): Promise<ActivePlayer | null> {
-    const ref = await this.players.getActiveForOwner(ownerAddress.toLowerCase());
+  // The user's current game + player (recover a session by verified Privy id), or null.
+  async getActiveForOwner(ownerId: string): Promise<ActivePlayer | null> {
+    const ref = await this.players.getActiveForOwner(ownerId.toLowerCase());
     if (!ref) return null;
     const [game, player] = await Promise.all([this.games.get(ref.gameId), this.players.get(ref.playerId)]);
     if (!game || !player) return null;
@@ -144,7 +147,8 @@ export class GameService {
   }
 
   // Strategy is editable only while the game is still in the lobby — once live, the prompt
-  // is frozen so a player can't redirect their agent mid-competition.
+  // is frozen so a player can't redirect their agent mid-competition. The caller must own
+  // the player (verified Privy id).
   async setStrategy(input: SetStrategyInput): Promise<Player> {
     const game = await this.requireGame(input.gameId);
     if (game.status !== "lobby") {
@@ -153,9 +157,16 @@ export class GameService {
       );
     }
     const player = await this.getPlayer(input.gameId, input.playerId);
+    this.assertOwner(player, input.ownerId);
     const updated: Player = { ...player, strategyPrompt: input.strategyPrompt };
     await this.players.save(updated);
     return updated;
+  }
+
+  private assertOwner(player: Player, ownerId: string): void {
+    if (player.ownerId !== ownerId.toLowerCase()) {
+      throw new ForbiddenError("You don't own this player");
+    }
   }
 
   async getTrades(gameId: string): Promise<Trade[]> {
@@ -181,7 +192,7 @@ export class GameService {
     const gameAccount = await this.unlink.createGameAccount();
     // Entry custody stays in Unlink; the Privy wallet is the public Base trading wallet.
     const wallet = await this.privy.createPlayerWallet();
-    const ownerAddress = input.ownerAddress?.toLowerCase();
+    const ownerId = input.ownerId?.toLowerCase();
     const player: Player = {
       id: randomUUID(),
       gameId: game.id,
@@ -190,7 +201,7 @@ export class GameService {
       encMnemonic: gameAccount.encMnemonic,
       depositStatus: "pending",
       createdAt: new Date().toISOString(),
-      ownerAddress,
+      ownerId,
       strategyPrompt: input.strategyPrompt,
       privyWalletId: wallet.walletId,
       privyWalletAddress: wallet.address,
@@ -198,8 +209,8 @@ export class GameService {
     };
     await this.players.save(player);
     await this.games.addPlayer(game.id, player.id);
-    if (ownerAddress) {
-      await this.players.setActiveForOwner(ownerAddress, { gameId: game.id, playerId: player.id });
+    if (ownerId) {
+      await this.players.setActiveForOwner(ownerId, { gameId: game.id, playerId: player.id });
     }
     this.hub.broadcast("player_joined", game.id, {
       player: toPublicPlayer(player),
