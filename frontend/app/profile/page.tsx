@@ -6,8 +6,9 @@ import { ArrowRight, ChevronRight, Copy, LogOut, Swords, Wallet } from "lucide-r
 import { useState } from "react";
 import { useAuth } from "@/app/_lib/auth";
 import { useGame } from "@/app/_lib/store";
+import { useAchievements } from "@/app/_lib/achievementsStore";
 import { getMatchBase, resolveMatch } from "@/app/_lib/matches";
-import { ACHIEVEMENTS, computeProgress, XP_PER_LEVEL } from "@/app/_lib/achievements";
+import { ACHIEVEMENTS, progressFor, XP_PER_LEVEL } from "@/app/_lib/achievements";
 import { shortAddress } from "@/app/_lib/format";
 import { formatDelta, useNow } from "@/app/_lib/useNow";
 import { AppShell } from "@/app/_components/AppShell";
@@ -30,7 +31,8 @@ function Profile() {
   const router = useRouter();
   const [copied, setCopied] = useState(false);
   const [achOpen, setAchOpen] = useState(false);
-  const progress = computeProgress({ authenticated: !!user, joinedMatchId, agent });
+  const unlocked = useAchievements((s) => s.unlocked);
+  const progress = progressFor(unlocked);
 
   if (!user) {
     return (

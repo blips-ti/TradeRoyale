@@ -1,46 +1,35 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect } from "react";
 import { useAuth } from "@/app/_lib/auth";
 import { useGame } from "@/app/_lib/store";
-import { ACHIEVEMENTS, computeProgress, type Achievement } from "@/app/_lib/achievements";
+import { useAchievements } from "@/app/_lib/achievementsStore";
 import { AchievementUnlock } from "./AchievementUnlock";
 
 /**
- * Watches the unlocked-achievement set and pops a full-screen celebration the
- * moment a NEW one unlocks during the session (e.g. connecting the wallet unlocks
- * "First Contact"). A baseline is captured once `ready` so pre-existing progress
- * isn't celebrated retroactively on reload.
+ * Drives the achievement celebration from the BE-persisted ledger. On connect we load the
+ * user's unlocked set; conditions (connect / first join / agent set up) call the idempotent
+ * unlock endpoint — so a celebration fires the FIRST time ever, never again on reconnect.
  */
 export function AchievementWatcher() {
-  const { ready, authenticated } = useAuth();
+  const { authenticated, user } = useAuth();
   const { joinedMatchId, agent } = useGame();
-  const { unlocked } = computeProgress({ authenticated, joinedMatchId, agent });
-  const key = [...unlocked].sort().join(",");
+  const address = user?.address ?? null;
+  const { loaded, queue, load, tryUnlock, dequeue, reset } = useAchievements();
 
-  const initialized = useRef(false);
-  const prev = useRef<Set<string>>(new Set());
-  const [queue, setQueue] = useState<Achievement[]>([]);
-
+  // Load (or clear) the ledger when the connected wallet changes.
   useEffect(() => {
-    if (!ready) return;
-    if (!initialized.current) {
-      initialized.current = true;
-      prev.current = new Set(unlocked);
-      return;
-    }
-    const fresh = [...unlocked].filter((id) => !prev.current.has(id));
-    // Always resync (so disconnect removes ids → reconnect re-triggers the celebration).
-    prev.current = new Set(unlocked);
-    if (fresh.length) {
-      const items = fresh
-        .map((id) => ACHIEVEMENTS.find((a) => a.id === id))
-        .filter((a): a is Achievement => !!a);
-      setQueue((q) => [...q, ...items]);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, key]);
+    if (address) load(address);
+    else reset();
+  }, [address, load, reset]);
 
-  const current = queue[0] ?? null;
-  return <AchievementUnlock achievement={current} onDismiss={() => setQueue((q) => q.slice(1))} />;
+  // Fire condition-based unlocks once the ledger is loaded.
+  useEffect(() => {
+    if (!loaded || !address) return;
+    if (authenticated) tryUnlock(address, "connect");
+    if (joinedMatchId) tryUnlock(address, "join");
+    if (agent) tryUnlock(address, "agent");
+  }, [loaded, address, authenticated, joinedMatchId, agent, tryUnlock]);
+
+  return <AchievementUnlock achievement={queue[0] ?? null} onDismiss={dequeue} />;
 }

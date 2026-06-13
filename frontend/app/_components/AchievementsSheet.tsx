@@ -2,11 +2,10 @@
 
 import { AnimatePresence, motion } from "framer-motion";
 import { Check, CircleCheck, Coins, Lock, X, Zap } from "lucide-react";
-import { useAuth } from "@/app/_lib/auth";
-import { useGame } from "@/app/_lib/store";
+import { useAchievements } from "@/app/_lib/achievementsStore";
 import {
   ACHIEVEMENTS,
-  computeProgress,
+  progressFor,
   XP_PER_LEVEL,
   type Achievement,
   type Rarity,
@@ -21,9 +20,8 @@ const RARITY_LABEL: Record<Rarity, { label: string; color: string }> = {
 };
 
 export function AchievementsSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { authenticated } = useAuth();
-  const { joinedMatchId, agent } = useGame();
-  const p = computeProgress({ authenticated, joinedMatchId, agent });
+  const unlocked = useAchievements((s) => s.unlocked);
+  const p = progressFor(unlocked);
   const total = ACHIEVEMENTS.length;
   const unlockedCount = p.unlocked.size;
 

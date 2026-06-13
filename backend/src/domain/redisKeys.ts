@@ -7,6 +7,9 @@ export const RedisKeys = {
   // Maps a user's wallet address (lowercased) to their current {gameId, playerId} so a
   // returning user recovers their player after a reconnect / on a new device.
   ownerActive: (ownerAddress: string): string => `tr:owner:${ownerAddress}:active`,
+  // Persisted achievements/XP per user (lowercased wallet address) — so an unlock is
+  // celebrated once ever, not on every reconnect.
+  achievements: (ownerAddress: string): string => `tr:owner:${ownerAddress}:achievements`,
   openGames: (): string => 'tr:games:open',
   liveGames: (): string => 'tr:games:live',
 } as const;

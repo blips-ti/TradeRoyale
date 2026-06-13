@@ -34,6 +34,10 @@ export type GameWithPlayers = { game: Game; players: PublicPlayer[] };
 /** GET /games/me/:ownerAddress — the caller's active game+player, recovered on reconnect. */
 export type ActivePlayerResponse = { game: Game | null; player: PublicPlayer | null };
 
+/** Persisted achievements/XP (GET /achievements/:owner, POST …/unlock). */
+export type AchievementState = { unlocked: string[]; totalXp: number; level: number };
+export type UnlockResult = AchievementState & { newlyUnlocked: boolean };
+
 export type JoinResult = {
   playerId: string;
   unlinkAddress: string;

@@ -39,6 +39,10 @@ export const updateStrategySchema = z.object({
   strategyPrompt,
 });
 
+export const unlockAchievementSchema = z.object({
+  id: z.string().trim().min(1).max(64),
+});
+
 export type CreateGameBody = z.infer<typeof createGameSchema>;
 export type JoinGameBody = z.infer<typeof joinGameSchema>;
 export type StartGameBody = z.infer<typeof startGameSchema>;

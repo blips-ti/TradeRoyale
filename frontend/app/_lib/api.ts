@@ -1,6 +1,7 @@
 /* Typed REST client for the trade-royal-backend. */
 
 import type {
+  AchievementState,
   ActivePlayerResponse,
   Game,
   GameWithPlayers,
@@ -9,6 +10,7 @@ import type {
   PublicPlayer,
   Settlement,
   Trade,
+  UnlockResult,
 } from "./types";
 
 export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000").replace(/\/$/, "");
@@ -59,6 +61,15 @@ export const api = {
 
   getResults: (gameId: string) =>
     req<{ settlement: Settlement | null }>(`/games/${gameId}/results`).then((r) => r.settlement),
+
+  // Persisted achievements/XP (BE-authoritative; unlock is idempotent).
+  getAchievements: (ownerAddress: string) => req<AchievementState>(`/achievements/${ownerAddress}`),
+
+  unlockAchievement: (ownerAddress: string, id: string) =>
+    req<UnlockResult>(`/achievements/${ownerAddress}/unlock`, {
+      method: "POST",
+      body: JSON.stringify({ id }),
+    }),
 
   // Proposed BE addition (integration plan §7A) — live instruction to the agent.
   instruct: (gameId: string, playerId: string, message: string) =>

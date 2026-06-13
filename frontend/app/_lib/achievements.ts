@@ -28,12 +28,6 @@ const RARITY_RANK: Record<Rarity, number> = { common: 0, rare: 1, epic: 2, legen
 
 export const XP_PER_LEVEL = 500;
 
-export type ProgressInput = {
-  authenticated: boolean;
-  joinedMatchId: string | null;
-  agent: unknown;
-};
-
 export type Progress = {
   unlocked: Set<string>;
   totalXp: number;
@@ -42,12 +36,8 @@ export type Progress = {
   best: Achievement | null;
 };
 
-export function computeProgress({ authenticated, joinedMatchId, agent }: ProgressInput): Progress {
-  const unlocked = new Set<string>();
-  if (authenticated) unlocked.add("connect");
-  if (joinedMatchId) unlocked.add("join");
-  if (agent) unlocked.add("agent");
-
+/** Derives XP/level/best from the BE-persisted unlocked set (source of truth). */
+export function progressFor(unlocked: Set<string>): Progress {
   const totalXp = ACHIEVEMENTS.filter((a) => unlocked.has(a.id)).reduce((s, a) => s + a.xp, 0);
   const level = Math.floor(totalXp / XP_PER_LEVEL);
   const xpInLevel = totalXp % XP_PER_LEVEL;
@@ -58,4 +48,8 @@ export function computeProgress({ authenticated, joinedMatchId, agent }: Progres
     )[0] ?? null;
 
   return { unlocked, totalXp, level, xpInLevel, best };
+}
+
+export function achievementById(id: string): Achievement | undefined {
+  return ACHIEVEMENTS.find((a) => a.id === id);
 }
