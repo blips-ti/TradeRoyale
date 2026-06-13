@@ -74,6 +74,25 @@ export class ViemReader {
     return Object.fromEntries(entries);
   }
 
+  // ONE multicall reading balanceOf(owner) of a single token for every owner, keyed by
+  // lowercased owner. The single RPC call that scores every trader's wallet at settlement.
+  async getErc20BalancesForOwners(token: string, owners: string[]): Promise<Record<string, string>> {
+    const results = await this.getClient().multicall({
+      contracts: owners.map((owner) => ({
+        address: token as Address,
+        abi: erc20Abi,
+        functionName: 'balanceOf' as const,
+        args: [owner as Address],
+      })),
+    });
+    const entries = owners.map((owner, index): [string, string] => {
+      const result = results[index];
+      const value = result && result.status === 'success' ? (result.result as bigint).toString() : '0';
+      return [owner.toLowerCase(), value];
+    });
+    return Object.fromEntries(entries);
+  }
+
   async waitForReceipt(hash: string): Promise<void> {
     await this.getClient().waitForTransactionReceipt({ hash: hash as Hash, timeout: RECEIPT_TIMEOUT_MS });
   }

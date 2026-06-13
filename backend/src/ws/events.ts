@@ -10,6 +10,8 @@ export type GameEventType =
   | 'agent_update'
   | 'trade_executed'
   | 'player_liquidated'
+  // Winner-take-all payout completed: every loser's USDC consolidated into the winner's wallet.
+  | 'prize_paid'
   // Per-tick NAV (USD) of a player's trading wallet — drives the live arena chart + standings.
   | 'portfolio_update';
 

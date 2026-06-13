@@ -62,19 +62,28 @@ export interface PlayerResult {
   pnl: string;
 }
 
-export type ValidationStatus = 'pending' | 'approved' | 'rejected';
-export type PayoutStatus = 'pending' | 'executed' | 'failed';
+export type PayoutStatus = 'pending' | 'executed' | 'partial' | 'failed';
 
-// Persisted settlement record (tr:game:{gameId}:settlement). Payout stays gated on
-// validationStatus until the CRE on-chain validator (owned by teammates) approves it.
+// One loser->winner USDC transfer in the winner-take-all consolidation. amount is the full
+// loser balance moved (base units); txHash is undefined when the send threw before broadcast.
+export interface PayoutTransfer {
+  playerId: string;
+  amount: string;
+  txHash?: string;
+  ok: boolean;
+}
+
+// Persisted settlement record (tr:game:{gameId}:settlement). After scoring, executePayout
+// consolidates every loser's USDC into the winner's Privy wallet (winner-take-all, public).
 export interface Settlement {
   gameId: string;
   winnerPlayerId: string | null;
   prizePoolUsdc: string;
   perPlayer: PlayerResult[];
   computedAt: string;
-  validationStatus: ValidationStatus;
   payoutStatus: PayoutStatus;
+  // Per-transfer audit trail of the winner-take-all consolidation; set by executePayout.
+  payouts?: PayoutTransfer[];
 }
 
 // Whether a trade is a plain swap or an arbitrary same-chain protocol interaction (zap).

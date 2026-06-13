@@ -155,8 +155,9 @@ where `kind` is `'swap' | 'contract_call'` and `description` is the agent's summ
 
 ### `GET /games/:gameId/results`
 The persisted Phase-3 settlement (`null` until the game has settled): `{ "settlement": Settlement | null }`
-where `Settlement = { gameId, winnerPlayerId, prizePoolUsdc, perPlayer: PlayerResult[], computedAt, validationStatus, payoutStatus }`,
-`validationStatus`/`payoutStatus` are `'pending'` until the CRE validator approves (see CRE section),
+where `Settlement = { gameId, winnerPlayerId, prizePoolUsdc, perPlayer: PlayerResult[], computedAt, payoutStatus, payouts? }`,
+`payoutStatus` is `'pending'` until the winner-take-all payout runs, then `'executed' | 'partial' | 'failed'`
+(see Settlement section), `payouts` is the per-transfer audit `{ playerId, amount, txHash?, ok }[]`,
 and `PlayerResult = { rank, playerId, displayName, privyWalletAddress, startingBalance, finalUsdc, octavNavUsd, pnl }`.
 `finalUsdc` (on-chain USDC after liquidation) is the source-of-truth score; `octavNavUsd` is an independent cross-check.
 
@@ -353,33 +354,28 @@ At `endsAt` the `GameClock` settles the game **server-side** (no agent / Anthrop
    gate honored). Liquidation is crash-safe per player AND per token (`Promise.allSettled`) — one
    stuck swap never blocks the rest — and skips positions worth less than `LIQUIDATION_MIN_USDC`.
    Each player emits `player_liquidated { playerId, ok }`.
-2. **On-chain final score.** `finalUsdc` = viem `balanceOf(USDC)` on the player's Privy wallet.
-   This is the **source-of-truth** score (authoritative, on-chain).
+2. **On-chain final score.** After all players liquidate, ONE `multicall` reads `balanceOf(USDC)`
+   on every player's Privy wallet (`getErc20BalancesForOwners`); each player's `finalUsdc` comes
+   from that single RPC call. This is the **source-of-truth** score (authoritative, on-chain).
 3. **Octav NAV cross-check.** `octavNavUsd` = Octav `/v1/nav` for the wallet — an independent
    advisory cross-check, never the score; a NAV fetch failure does not block settlement.
 4. **Rank.** Players ranked by `finalUsdc` desc; `pnl = finalUsdc − startingBalance` (and
    `startingBalance` is the exact entry amount put in play, not the raw deposit). `game_ended`
    carries the ranked `PlayerResult[]`.
 5. **Settlement record.** Persisted to `tr:game:{gameId}:settlement` (`Settlement`) with the
-   prize pool (sum of `finalUsdc`), the rank-1 winner, and `validationStatus`/`payoutStatus`
-   both `pending`. Exposed via `GET /games/:gameId/results`.
-
-### CRE settlement validation (owned by teammates)
-
-On-chain settlement **validation** is intentionally **out of scope** here — teammates own the
-CRE (Chainlink Runtime Environment) validator. The extension point is the `SettlementValidator`
-interface (`src/settlement/settlementValidator.ts`); plug the CRE validator in place of the
-default `NoopSettlementValidator` (which always returns `{ approved: false }`).
-
-`SettlementService.executePayout(settlement)` contains the **winner-take-all payout logic**
-(deposit each player's `finalUsdc` from their Privy wallet back into Unlink, then privately
-transfer the pooled prize to the winner's Unlink account) but is **gated on
-`validator.approved`** — with the noop default it moves **no funds** and there is **no public
-route** that triggers it. The Unlink deposit-back uses `client.depositWithApproval` with the
-Privy wallet as the external EVM signer (verified: `DepositWithApprovalParams.evm` accepts an
-`EvmProvider` built via `evm.fromSigner`); the remaining stub is bridging Privy's `signTypedData`
-to Unlink's exact Permit2 typed-data shape, which must be verified against the canary SDK before
-payout is enabled.
+   prize pool (sum of `finalUsdc`), the rank-1 winner, and `payoutStatus: 'pending'`. Exposed via
+   `GET /games/:gameId/results`.
+6. **Winner-take-all payout.** `SettlementService.executePayout` runs immediately after the
+   record is built (no gate, no public route). It re-reads every player's USDC in ONE multicall —
+   the **authoritative** winner determination, not the rank — picks the wallet holding the most
+   USDC (tie-break: lowest `playerId`), then transfers each non-winner's **full** USDC balance
+   into the winner's Privy wallet via a sponsored erc20 `transfer` (`sponsor: true`). Zero-balance
+   wallets and the winner are skipped; a single player is a no-op. Each loser transfer is isolated
+   (`Promise.allSettled`) so one failure never blocks the rest. `payoutStatus` is set to
+   `'executed'` (all succeeded), `'partial'` (some failed), or `'failed'` (all failed), and the
+   per-transfer audit is stored in `payouts`. A `prize_paid` WS event carries
+   `{ winnerPlayerId, winnerAddress, prizePoolUsdc, transfers }`. Funds consolidate **publicly**
+   into the winner's Privy wallet — no CRE validation and no Unlink private payout.
 
 ---
 
@@ -440,7 +436,6 @@ The custodial mnemonic is encrypted with AES-256-GCM and **never** leaves the ba
 - **Phase 2 — Trading agent.** Per-player Claude agent trading the Privy server wallet on
   Base via LI.FI (swaps + same-chain contract calls), gas sponsored. ✅ shipped (see "Trading
   agents").
-- **Phase 3 — Settlement.** Server-driven liquidate → on-chain `finalUsdc` + Octav NAV
-  cross-check → rank → settlement record. ✅ shipped (see "Settlement"). The CRE on-chain
-  **validation** that gates payout is owned by teammates — see the `SettlementValidator`
-  extension point.
+- **Phase 3 — Settlement.** Server-driven liquidate → on-chain `finalUsdc` (single multicall) +
+  Octav NAV cross-check → rank → settlement record → winner-take-all USDC consolidation into the
+  winner's Privy wallet. ✅ shipped (see "Settlement").

@@ -181,12 +181,11 @@ export class UnlinkService {
     await handle.wait();
   }
 
-  // Phase-3 settlement: deposit winnings from a player's Privy wallet back into Unlink.
-  // VERIFIED against the canary .d.ts: client.depositWithApproval accepts an external `evm`
-  // provider (built via evm.fromSigner) — so the Privy wallet is the signer. STUB REMAINING:
-  // EvmProvider.signTypedData must sign Unlink's exact Permit2 typed-data shape via Privy's
-  // signTypedData; that bridge needs canary verification before enabling. Gated upstream behind
-  // the CRE validator (NoopSettlementValidator), so this never fires in v1.
+  // Deposit funds from a player's Privy wallet back into Unlink. VERIFIED against the canary
+  // .d.ts: client.depositWithApproval accepts an external `evm` provider (built via
+  // evm.fromSigner) — so the Privy wallet is the signer. STUB REMAINING: EvmProvider.signTypedData
+  // must sign Unlink's exact Permit2 typed-data shape via Privy's signTypedData; that bridge needs
+  // canary verification before enabling. No longer used by settlement (winner-take-all is public).
   async depositFromPrivyWallet(request: DepositFromPrivyRequest): Promise<void> {
     const client = this.getOrBuildClient(request.unlinkAddress, {
       unlinkAddress: request.unlinkAddress,

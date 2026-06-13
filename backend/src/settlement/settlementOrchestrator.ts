@@ -13,8 +13,8 @@ import { gameEventHub, GameEventHub } from "../ws/gameEventHub.js";
 import { settlementService, SettlementService } from "./settlementService.js";
 
 // Server-driven Phase-3 settlement: liquidate every non-entry touched token back to USDC on
-// Base, read authoritative on-chain final USDC, cross-check Octav NAV, rank, persist. Trading
-// (the agent / Anthropic) is NOT involved — this is fully server-side.
+// Base, read authoritative on-chain final USDC via ONE multicall, cross-check Octav NAV, rank,
+// persist, then consolidate all USDC into the winner. Trading (the agent) is NOT involved.
 export class SettlementOrchestrator {
   constructor(
     private readonly games: GameRepository = new GameRepository(),
@@ -29,26 +29,39 @@ export class SettlementOrchestrator {
     private readonly minUsdc: string = env.LIQUIDATION_MIN_USDC,
   ) {}
 
-  // Liquidates + scores every player crash-safe, ranks by on-chain finalUsdc desc, persists the
-  // settlement record (payout stays gated on the CRE validator). Returns the ranked results.
+  // Liquidates every player crash-safe, then scores them all with ONE multicall reading each
+  // wallet's final USDC, ranks by finalUsdc desc, persists, and runs the winner-take-all payout.
   async settle(game: Game): Promise<PlayerResult[]> {
     const playerIds = await this.games.listPlayerIds(game.id);
     const players = await this.players.getMany(playerIds);
-    const scored = await Promise.allSettled(players.map((player) => this.settlePlayer(game, player)));
-    const scoredResults = scored
-      .filter((result): result is PromiseFulfilledResult<ScoredPlayer> => result.status === "fulfilled")
+    const liquidated = await Promise.allSettled(players.map((player) => this.settlePlayer(game, player)));
+    const scoredResults = liquidated
+      .filter((result): result is PromiseFulfilledResult<Player> => result.status === "fulfilled")
       .map((result) => result.value);
-    const results = this.rank(scoredResults);
-    await this.settlements.buildSettlement(game.id, results);
+    const finalUsdc = await this.scoreUsdc(scoredResults);
+    const scored = await Promise.all(scoredResults.map((player) => this.scorePlayer(game, player, finalUsdc)));
+    const results = this.rank(scored);
+    const settlement = await this.settlements.buildSettlement(game.id, results);
+    await this.settlements.executePayout(settlement);
     return results;
   }
 
-  private async settlePlayer(game: Game, player: Player): Promise<ScoredPlayer> {
+  // ONE multicall reading the entry-token (USDC) balance of every player's Privy wallet — the
+  // single RPC call that checks every trader's wallet. Keyed by lowercased owner address.
+  private async scoreUsdc(players: Player[]): Promise<Record<string, string>> {
+    const addresses = players.map((player) => player.privyWalletAddress).filter((address): address is string => !!address);
+    if (addresses.length === 0) return {};
+    return this.viem.getErc20BalancesForOwners(this.entryToken, addresses);
+  }
+
+  private async settlePlayer(game: Game, player: Player): Promise<Player> {
     const liquidated = await this.liquidate(game, player);
     this.hub.broadcast("player_liquidated", game.id, { playerId: player.id, ok: liquidated });
-    const finalUsdc = player.privyWalletAddress
-      ? await this.viem.getErc20Balance(this.entryToken, player.privyWalletAddress)
-      : "0";
+    return player;
+  }
+
+  private async scorePlayer(game: Game, player: Player, balances: Record<string, string>): Promise<ScoredPlayer> {
+    const finalUsdc = balances[(player.privyWalletAddress ?? "").toLowerCase()] ?? "0";
     const octavNavUsd = await this.fetchNav(player);
     await this.players.save({ ...player, finalUsdc, octavNavUsd });
     return {

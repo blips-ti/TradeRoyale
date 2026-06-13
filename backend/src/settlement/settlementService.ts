@@ -1,33 +1,39 @@
 import { BigNumber } from "bignumber.js";
+import { encodeFunctionData, erc20Abi } from "viem";
 
-import type { PlayerResult, Settlement } from "../domain/types.js";
+import type { PayoutStatus, PayoutTransfer, Player, PlayerResult, Settlement } from "../domain/types.js";
 import { env } from "../env.js";
 import { logger } from "../logger.js";
 import { PlayerRepository } from "../repositories/playerRepository.js";
 import { SettlementRepository } from "../repositories/settlementRepository.js";
-import { unlinkService, UnlinkService } from "../services/unlinkService.js";
-import {
-  noopSettlementValidator,
-  type SettlementValidator,
-} from "./settlementValidator.js";
+import { privyService, PrivyService } from "../services/privyService.js";
+import { viemReader, ViemReader } from "../services/viemClient.js";
+import { gameEventHub, GameEventHub } from "../ws/gameEventHub.js";
+
+type Address = `0x${string}`;
 
 export interface PayoutResult {
-  executed: boolean;
-  reason: string;
+  winnerPlayerId: string | null;
+  winnerAddress: string | null;
+  prizePoolUsdc: string;
+  transfers: PayoutTransfer[];
 }
 
-// Builds the settlement record from ranked results and gates payout behind the validator. The
-// default NoopSettlementValidator never approves, so executePayout never moves funds in v1.
+// Builds the ranked settlement record, then runs the winner-take-all payout: read every
+// player's on-chain USDC in ONE multicall, pick the richest wallet as winner, and consolidate
+// all losers' USDC into it via sponsored Privy transfers. Funds land publicly in the winner.
 export class SettlementService {
   constructor(
     private readonly settlements: SettlementRepository = new SettlementRepository(),
     private readonly players: PlayerRepository = new PlayerRepository(),
-    private readonly unlink: UnlinkService = unlinkService,
-    private readonly validator: SettlementValidator = noopSettlementValidator,
+    private readonly viem: ViemReader = viemReader,
+    private readonly privy: PrivyService = privyService,
+    private readonly hub: GameEventHub = gameEventHub,
+    private readonly entryToken: string = env.ENTRY_TOKEN_ADDRESS,
   ) {}
 
   // Computes the prize pool (sum of finalUsdc) + winner (rank 1), persists the record with
-  // payout/validation pending. winnerPlayerId is null when there are no results.
+  // payout pending. winnerPlayerId is null when there are no results.
   async buildSettlement(gameId: string, results: PlayerResult[]): Promise<Settlement> {
     const prizePoolUsdc = results
       .reduce((sum, result) => sum.plus(result.finalUsdc), new BigNumber(0))
@@ -39,62 +45,114 @@ export class SettlementService {
       prizePoolUsdc,
       perPlayer: results,
       computedAt: new Date().toISOString(),
-      validationStatus: "pending",
       payoutStatus: "pending",
     };
     await this.settlements.save(settlement);
     return settlement;
   }
 
-  // Internal/admin-only winner-take-all payout. GATED on validator.approved — with the noop
-  // validator it returns early and moves NO funds. There is deliberately no public route to
-  // this. When a CRE validator approves: deposit each player's finalUsdc from their Privy wallet
-  // back into Unlink, then privately transfer the pooled prize to the winner's Unlink account.
+  // Winner-take-all USDC consolidation. Re-reads every player's USDC in ONE multicall (the
+  // authoritative winner determination — not the rank), then transfers each loser's FULL USDC
+  // balance into the winner's Privy wallet. Crash-safe per loser, no-op for a single player.
   async executePayout(settlement: Settlement): Promise<PayoutResult> {
-    const validation = await this.validator.validate(settlement);
-    if (!validation.approved) {
-      logger.info({ gameId: settlement.gameId, reason: validation.reason }, "[settlement] payout not approved");
-      return { executed: false, reason: validation.reason };
-    }
-    try {
-      await this.depositAllBack(settlement);
-      await this.transferPrizeToWinner(settlement);
-      await this.settlements.save({ ...settlement, validationStatus: "approved", payoutStatus: "executed" });
-      return { executed: true, reason: "payout executed" };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.error({ gameId: settlement.gameId, err: message }, "[settlement] payout failed");
-      await this.settlements.save({ ...settlement, validationStatus: "approved", payoutStatus: "failed" });
-      return { executed: false, reason: message };
-    }
+    const players = await this.loadPlayers(settlement);
+    const addresses = players.map((player) => player.privyWalletAddress!).filter((address) => !!address);
+    const balances = await this.viem.getErc20BalancesForOwners(this.entryToken, addresses);
+    const winner = this.pickWinner(players, balances);
+    if (!winner?.privyWalletAddress) return this.noWinner(settlement);
+
+    const losers = players.filter((player) => player.id !== winner.id);
+    const transfers = await this.transferAll(losers, winner.privyWalletAddress, balances);
+    const payoutStatus = this.deriveStatus(transfers);
+    await this.settlements.save({ ...settlement, winnerPlayerId: winner.id, payoutStatus, payouts: transfers });
+
+    this.hub.broadcast("prize_paid", settlement.gameId, {
+      winnerPlayerId: winner.id,
+      winnerAddress: winner.privyWalletAddress,
+      prizePoolUsdc: settlement.prizePoolUsdc,
+      transfers,
+    });
+    return {
+      winnerPlayerId: winner.id,
+      winnerAddress: winner.privyWalletAddress,
+      prizePoolUsdc: settlement.prizePoolUsdc,
+      transfers,
+    };
   }
 
-  private async depositAllBack(settlement: Settlement): Promise<void> {
-    for (const result of settlement.perPlayer) {
-      const player = await this.players.get(result.playerId);
-      if (!player?.privyWalletId || !player.privyWalletAddress) continue;
-      if (new BigNumber(result.finalUsdc).lte(0)) continue;
-      await this.unlink.depositFromPrivyWallet({
-        unlinkAddress: player.unlinkAddress,
-        encMnemonic: player.encMnemonic,
-        privyWalletId: player.privyWalletId,
-        privyWalletAddress: player.privyWalletAddress,
-        token: env.ENTRY_TOKEN_ADDRESS,
-        amount: result.finalUsdc,
-      });
-    }
+  private async loadPlayers(settlement: Settlement): Promise<Player[]> {
+    const loaded = await Promise.all(settlement.perPlayer.map((result) => this.players.get(result.playerId)));
+    return loaded.filter((player): player is Player => player !== null && !!player.privyWalletAddress);
   }
 
-  private async transferPrizeToWinner(settlement: Settlement): Promise<void> {
-    if (!settlement.winnerPlayerId) return;
-    const winner = await this.players.get(settlement.winnerPlayerId);
-    if (!winner) throw new Error("Winner player not found");
-    logger.info(
-      { gameId: settlement.gameId, winner: winner.id, prize: settlement.prizePoolUsdc },
-      "[settlement] prize transfer (winner-take-all) — Unlink private transfer",
+  // Winner = the wallet holding the most USDC; tie-break deterministically on the lowest
+  // playerId so the same inputs always crown the same winner.
+  private pickWinner(players: Player[], balances: Record<string, string>): Player | null {
+    return players.reduce<Player | null>((best, player) => {
+      if (!best) return player;
+      const current = new BigNumber(this.balanceOf(player, balances));
+      const incumbent = new BigNumber(this.balanceOf(best, balances));
+      if (current.gt(incumbent)) return player;
+      if (current.eq(incumbent) && player.id < best.id) return player;
+      return best;
+    }, null);
+  }
+
+  // Only losers with a positive USDC balance get a transfer; zero-balance wallets are skipped
+  // entirely (no send, no record). Each transfer is isolated so one failure never blocks the rest.
+  private async transferAll(
+    losers: Player[],
+    winnerAddress: string,
+    balances: Record<string, string>,
+  ): Promise<PayoutTransfer[]> {
+    const funded = losers.filter((loser) => new BigNumber(this.balanceOf(loser, balances)).gt(0));
+    const settled = await Promise.allSettled(
+      funded.map((loser) => this.transferOne(loser, winnerAddress, this.balanceOf(loser, balances))),
     );
-    // The pooled prize is transferred to the winner's Unlink account; the per-player deposits
-    // above land the funds in Unlink first. Wired through unlinkService.transfer at enable-time.
+    return settled.map((result, index) => this.toTransfer(funded[index]!, this.balanceOf(funded[index]!, balances), result));
+  }
+
+  // Moves a single loser's FULL USDC balance into the winner via a sponsored erc20 transfer.
+  private async transferOne(loser: Player, winnerAddress: string, amount: string): Promise<string> {
+    if (!loser.privyWalletId) throw new Error(`player ${loser.id} has no Privy wallet`);
+    const data = encodeFunctionData({
+      abi: erc20Abi,
+      functionName: "transfer",
+      // viem needs a JS bigint here — convert at this single call site from the base-unit string.
+      args: [winnerAddress as Address, BigInt(new BigNumber(amount).toFixed(0))],
+    });
+    const hash = await this.privy.sendTransaction(
+      loser.privyWalletId,
+      { to: this.entryToken, data, value: "0" },
+      { sponsor: true },
+    );
+    await this.viem.waitForReceipt(hash);
+    return hash;
+  }
+
+  private toTransfer(loser: Player, amount: string, result: PromiseSettledResult<string>): PayoutTransfer {
+    if (result.status === "fulfilled") return { playerId: loser.id, amount, txHash: result.value, ok: true };
+    const message = result.reason instanceof Error ? result.reason.message : String(result.reason);
+    logger.error({ playerId: loser.id, err: message }, "[settlement] loser transfer failed");
+    return { playerId: loser.id, amount, ok: false };
+  }
+
+  // "executed" if every attempted transfer succeeded, "failed" if every one failed, else
+  // "partial". A run with no transfers (single player / all-zero balances) counts as executed.
+  private deriveStatus(transfers: PayoutTransfer[]): PayoutStatus {
+    if (transfers.length === 0) return "executed";
+    if (transfers.every((transfer) => transfer.ok)) return "executed";
+    if (transfers.every((transfer) => !transfer.ok)) return "failed";
+    return "partial";
+  }
+
+  private async noWinner(settlement: Settlement): Promise<PayoutResult> {
+    await this.settlements.save({ ...settlement, payoutStatus: "executed", payouts: [] });
+    return { winnerPlayerId: null, winnerAddress: null, prizePoolUsdc: settlement.prizePoolUsdc, transfers: [] };
+  }
+
+  private balanceOf(player: Player, balances: Record<string, string>): string {
+    return balances[(player.privyWalletAddress ?? "").toLowerCase()] ?? "0";
   }
 }
 

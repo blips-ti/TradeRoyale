@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { Game, Player } from '../domain/types.js';
+import type { Game, Player, PlayerResult, Settlement } from '../domain/types.js';
 import type { GameRepository } from '../repositories/gameRepository.js';
 import type { PlayerRepository } from '../repositories/playerRepository.js';
 import type { LifiService } from '../services/lifiService.js';
@@ -69,9 +69,10 @@ function buildDeps(options: {
   } as unknown as PlayerRepository;
   const executor = { executeSwap: vi.fn(async () => ({ txHash: '0xliq', status: 'confirmed' })) } as unknown as TradeExecutor;
   const viem = {
-    // finalUsdc keyed by wallet address (USDC balance after liquidation); token balances keyed by token.
-    getErc20Balance: vi.fn(async (token: string, owner: string) =>
-      token.toLowerCase() === USDC ? (options.finalUsdc[owner] ?? '0') : (options.tokenBalances[token.toLowerCase()] ?? '0'),
+    // Per-token liquidation reads stay per-call; final USDC scoring is ONE multicall across owners.
+    getErc20Balance: vi.fn(async (token: string, _owner: string) => options.tokenBalances[token.toLowerCase()] ?? '0'),
+    getErc20BalancesForOwners: vi.fn(async (_token: string, owners: string[]) =>
+      Object.fromEntries(owners.map((owner) => [owner.toLowerCase(), options.finalUsdc[owner] ?? '0'])),
     ),
     getNativeBalance: vi.fn(async () => '0'),
   } as unknown as ViemReader;
@@ -82,7 +83,17 @@ function buildDeps(options: {
     })),
   } as unknown as LifiService;
   const octav = { getNav: vi.fn(async () => ({ navUsd: '42', raw: {} })) } as unknown as OctavService;
-  const settlements = { buildSettlement: vi.fn(async () => undefined) } as unknown as SettlementService;
+  const settlements = {
+    buildSettlement: vi.fn(async (gameId: string, results: PlayerResult[]): Promise<Settlement> => ({
+      gameId,
+      winnerPlayerId: results.find((r) => r.rank === 1)?.playerId ?? null,
+      prizePoolUsdc: '0',
+      perPlayer: results,
+      computedAt: new Date().toISOString(),
+      payoutStatus: 'pending',
+    })),
+    executePayout: vi.fn(async () => ({ winnerPlayerId: null, winnerAddress: null, prizePoolUsdc: '0', transfers: [] })),
+  } as unknown as SettlementService;
   const hub = {
     broadcast: vi.fn((type: string, _id: string, data: Record<string, unknown>) => void broadcasts.push({ type, data })),
   } as unknown as GameEventHub;
@@ -152,5 +163,23 @@ describe('SettlementOrchestrator.settle', () => {
     const results = await build(deps).settle(game);
     // 'bad' liquidation failed but scoring still ran (its result is present); 'ok' unaffected.
     expect(results.map((r) => r.playerId).sort()).toEqual(['bad', 'ok']);
+  });
+
+  it('scores every wallet with ONE multicall and runs the payout', async () => {
+    const p1 = player('p1', [USDC]);
+    const p2 = player('p2', [USDC]);
+    const deps = buildDeps({
+      players: [p1, p2],
+      finalUsdc: { [p1.privyWalletAddress!]: '1500000', [p2.privyWalletAddress!]: '900000' },
+      tokenBalances: {},
+    });
+    await build(deps).settle(game);
+    // Final-USDC scoring is a single multicall across both owners (not one read per player).
+    expect(deps.viem.getErc20BalancesForOwners).toHaveBeenCalledTimes(1);
+    const [token, owners] = (deps.viem.getErc20BalancesForOwners as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    expect(token).toBe(USDC);
+    expect(owners.sort()).toEqual([p1.privyWalletAddress, p2.privyWalletAddress].sort());
+    // The payout actually runs now (today nothing called it).
+    expect(deps.settlements.executePayout).toHaveBeenCalledTimes(1);
   });
 });

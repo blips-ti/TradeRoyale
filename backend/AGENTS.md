@@ -43,7 +43,10 @@ Fleet-specific exceptions that do NOT apply here: `@octavlabs/secrets`,
 - `src/agent/` — `AgentRunner` drives ONE continuous, autonomous, per-player async loop
   (AbortController per `${gameId}:${playerId}`) for the full game window; agents pace
   themselves via the `wait` tool. Loops are aborted + awaited before settlement liquidation.
-- `src/settlement/` — server-driven Phase-3 liquidation/scoring + the CRE validator stub.
+- `src/settlement/` — server-driven Phase-3 liquidation/scoring + winner-take-all payout.
+  After liquidation, ONE multicall (`getErc20BalancesForOwners`) reads every trader's USDC; the
+  richest wallet wins (tie-break: lowest playerId) and every loser's full USDC is transferred
+  into the winner's Privy wallet via sponsored sends. Funds consolidate publicly (no CRE/Unlink).
 - `src/ws/` — `GameEventHub` + WebSocket route.
 
 ## Security notes
