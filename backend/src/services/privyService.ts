@@ -25,9 +25,11 @@ export class MissingPrivyCredentialsError extends Error {}
 // billed to app gas credits — no master ETH-drip wallet).
 export class PrivyService {
   private static instance: PrivyService;
-  private client: PrivyClient | undefined;
 
-  constructor(private readonly chainId: number = env.CHAIN_ID) {}
+  constructor(
+    private readonly chainId: number = env.CHAIN_ID,
+    private client: PrivyClient | undefined = undefined,
+  ) {}
 
   static getInstance(): PrivyService {
     if (!PrivyService.instance) {
@@ -58,8 +60,8 @@ export class PrivyService {
     return { walletId: wallet.id, address: wallet.address };
   }
 
-  // Sends an EVM transaction from the player's server wallet on eip155:${CHAIN_ID}. Value is
-  // always "0" (we only ever call approve/swap calldata; the agent never moves native ETH).
+  // Privy requires transaction.value as a 0x-hex string. Callers pass mixed forms (decimal "0"
+  // for approve/transfer, LI.FI's 0x-hex for native swaps); toHexValue canonicalizes them.
   async sendTransaction(
     walletId: string,
     request: PrivyTransactionRequest,
@@ -76,7 +78,7 @@ export class PrivyService {
             transaction: {
               to: request.to,
               data: request.data,
-              value: request.value,
+              value: this.toHexValue(request.value),
               chain_id: this.chainId,
             },
           },
@@ -86,6 +88,13 @@ export class PrivyService {
       logger.warn({ walletId, err: error }, '[privy] sendTransaction failed');
       throw error;
     }
+  }
+
+  // Canonical lowercase 0x-hex for Privy's value field. BigInt() parses both decimal ("0",
+  // "1000000000000000000") and hex ("0x0", "0xde0b6b3a7640000"); empty/missing → "0x0".
+  private toHexValue(value?: string): string {
+    if (!value) return '0x0';
+    return `0x${BigInt(value).toString(16)}`;
   }
 }
 
