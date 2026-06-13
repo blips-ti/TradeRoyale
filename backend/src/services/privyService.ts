@@ -46,6 +46,13 @@ export class PrivyService {
     return this.client;
   }
 
+  // Verifies a Privy access token (issued to the browser on login) and returns the Privy
+  // user id (DID) — the canonical, tamper-proof user identity used to authorize actions.
+  async verifyAccessToken(accessToken: string): Promise<string> {
+    const result = await this.getClient().utils().auth().verifyAccessToken(accessToken);
+    return result.user_id;
+  }
+
   async createPlayerWallet(): Promise<PlayerWallet> {
     const wallet = await this.getClient().wallets().create({ chain_type: 'ethereum' });
     return { walletId: wallet.id, address: wallet.address };
