@@ -1,7 +1,6 @@
 "use client";
 
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
 
 export type AgentConfig = {
   name: string;
@@ -30,39 +29,28 @@ type GameState = {
 
 const TWELVE_HOURS = 12 * 60 * 60 * 1000;
 
-export const useGame = create<GameState>()(
-  persist(
-    (set, get) => ({
-      anchorAt: null,
-      joinedMatchId: null,
-      playerId: null,
-      agent: null,
+// In-memory only — the backend (GET /games/me) is the source of truth, rehydrated on
+// connect by useSessionSync. Nothing is persisted to localStorage.
+export const useGame = create<GameState>()((set, get) => ({
+  anchorAt: null,
+  joinedMatchId: null,
+  playerId: null,
+  agent: null,
 
-      init: () => {
-        const now = Date.now();
-        const a = get().anchorAt;
-        if (!a || now - a > TWELVE_HOURS) set({ anchorAt: now });
-      },
+  init: () => {
+    const now = Date.now();
+    const a = get().anchorAt;
+    if (!a || now - a > TWELVE_HOURS) set({ anchorAt: now });
+  },
 
-      join: (matchId) => {
-        if (get().joinedMatchId) return; // one match at a time, no switching
-        set({ joinedMatchId: matchId });
-      },
+  join: (matchId) => {
+    if (get().joinedMatchId) return; // one match at a time, no switching
+    set({ joinedMatchId: matchId });
+  },
 
-      setSession: (gameId, playerId) => set({ joinedMatchId: gameId, playerId }),
+  setSession: (gameId, playerId) => set({ joinedMatchId: gameId, playerId }),
 
-      setAgent: (agent) => set({ agent }),
+  setAgent: (agent) => set({ agent }),
 
-      reset: () => set({ joinedMatchId: null, playerId: null, agent: null }),
-    }),
-    {
-      name: "alphaarena.game",
-      partialize: (s) => ({
-        anchorAt: s.anchorAt,
-        joinedMatchId: s.joinedMatchId,
-        playerId: s.playerId,
-        agent: s.agent,
-      }),
-    },
-  ),
-);
+  reset: () => set({ joinedMatchId: null, playerId: null, agent: null }),
+}));

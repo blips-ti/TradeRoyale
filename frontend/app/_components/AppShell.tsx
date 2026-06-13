@@ -23,8 +23,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
-  // Recover the user's active game/player from the backend on (re)connect.
-  useSessionSync(authenticated);
+  // Reconcile the user's active game/player with the backend (source of truth) on
+  // (re)connect or wallet switch — clears stale local state when there's no active game.
+  useSessionSync(user?.id ?? null);
 
   useEffect(() => {
     init();

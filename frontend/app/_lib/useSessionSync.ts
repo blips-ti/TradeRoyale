@@ -5,25 +5,31 @@ import { api } from "./api";
 import { useGame } from "./store";
 
 /**
- * On connect, recovers the user's active game/player from the backend (`GET /games/me`,
- * authorized by the Privy token) so disconnect → reconnect, or a new device, restores the
- * profile/match. No-op if there's no active game. Best-effort; silent on failure.
+ * Reconciles local session state with the backend (`GET /games/me`, authorized by the Privy
+ * token), which is the source of truth — no localStorage. Keyed on the user id so connect,
+ * reconnect, a new device, OR a wallet switch all re-sync. If the backend reports no active
+ * game, local state is cleared (so a fresh wallet starts from 0). Best-effort; silent on failure.
  */
-export function useSessionSync(authenticated: boolean) {
+export function useSessionSync(userId: string | null) {
   const setSession = useGame((s) => s.setSession);
+  const reset = useGame((s) => s.reset);
 
   React.useEffect(() => {
-    if (!authenticated) return;
+    if (!userId) {
+      reset();
+      return;
+    }
     let alive = true;
     api
       .getActive()
       .then((res) => {
-        if (!alive || !res.game || !res.player) return;
-        setSession(res.game.id, res.player.id);
+        if (!alive) return;
+        if (res.game && res.player) setSession(res.game.id, res.player.id);
+        else reset();
       })
       .catch(() => {});
     return () => {
       alive = false;
     };
-  }, [authenticated, setSession]);
+  }, [userId, setSession, reset]);
 }
