@@ -3,15 +3,11 @@ import type { Game, Player } from "../domain/types.js";
 import { logger } from "../logger.js";
 import { GameRepository } from "../repositories/gameRepository.js";
 import { PlayerRepository } from "../repositories/playerRepository.js";
-import { clampWaitSeconds } from "./tools.js";
 import { tradingAgent, TradingAgent } from "./tradingAgent.js";
 
 const MS_PER_SEC = 1000;
 const FAILURE_BACKOFF_MS = 2_000;
 const MAX_CONSECUTIVE_FAILURES = 5;
-// Hard ceiling on the inter-turn wait so the agent stays continuously active (the LLM latency
-// already paces it) — even if it asks to wait longer, it acts again within a few seconds.
-const MAX_WAIT_SECONDS = 3;
 
 interface RunningLoop {
   controller: AbortController;
@@ -93,9 +89,10 @@ export class AgentRunner {
     logger.info({ gameId: game.id, playerId: player.id }, "[agentLoop] player loop started");
   }
 
-  // One player's continuous loop. Crash-safe: a thrown turn is caught, logged, and the loop
-  // backs off then continues; consecutive failures are capped so a permanently-broken player
-  // stops without affecting anyone else. Loops while not aborted AND the game is still live.
+  // One player's INSTRUCTION-DRIVEN loop. The agent runs ONE turn on its strategy at the start,
+  // then idles — it acts again ONLY when the player sends a live instruction (which calls wake).
+  // No autonomous ticking / self-talk. Crash-safe: a thrown turn backs off and retries; repeated
+  // failures are capped so a broken player stops without affecting anyone else.
   private async runPlayerLoop(
     game: Game,
     player: Player,
@@ -104,23 +101,28 @@ export class AgentRunner {
   ): Promise<void> {
     let consecutiveFailures = 0;
     let turns = 0;
+    let runNow = true; // the first turn fires immediately (act on the strategy)
     while (!signal.aborted && (await this.isGameLive(game.id)) && this.secondsRemaining(game) > 0) {
+      if (!runNow) {
+        // Idle until the player sends an instruction (or the game aborts / reaches the buzzer).
+        await this.waitForInstruction(player.id, signal);
+        if (signal.aborted || !(await this.isGameLive(game.id)) || this.secondsRemaining(game) <= 0) return;
+      }
+      runNow = false;
       if (this.maxTurns > 0 && turns >= this.maxTurns) {
         logger.info({ gameId: game.id, playerId: player.id, turns }, "[agentLoop] max turns reached");
         return;
       }
-      let waitSeconds = this.defaultWaitSeconds;
       try {
         const fresh = (await this.players.get(player.id)) ?? player;
         const result = await this.agent.runTick(game, fresh, gameOwnedAddresses, signal);
-        // Clear any live instruction — runTick injected it into this turn; it must not repeat.
+        // Clear the live instruction — runTick injected it into this turn; it must not repeat.
         await this.players.save({
           ...fresh,
           lastAgentSummary: result.summary,
           touchedTokens: result.touchedTokens,
           pendingInstruction: undefined,
         });
-        waitSeconds = result.requestedWaitSeconds ?? this.defaultWaitSeconds;
         consecutiveFailures = 0;
         turns += 1;
       } catch (error) {
@@ -135,27 +137,21 @@ export class AgentRunner {
           return;
         }
         await this.sleep(FAILURE_BACKOFF_MS, signal);
-        continue;
+        runNow = true; // retry the failed turn immediately (don't wait for an instruction)
       }
-      const floorSeconds = this.minLoopIntervalMs / MS_PER_SEC;
-      const ceiling = Math.min(this.secondsRemaining(game), MAX_WAIT_SECONDS);
-      const clamped = clampWaitSeconds(waitSeconds, floorSeconds, ceiling);
-      if (clamped <= 0) return;
-      await this.interruptibleSleep(player.id, clamped * MS_PER_SEC, signal);
     }
   }
 
-  // Like sleep(), but also resolves early when wake(playerId) is called (a new instruction).
-  private interruptibleSleep(playerId: string, ms: number, signal: AbortSignal): Promise<void> {
+  // Blocks until the player sends an instruction (wake) or the loop is aborted — there is NO
+  // timer, so an idle agent never acts on its own.
+  private waitForInstruction(playerId: string, signal: AbortSignal): Promise<void> {
     if (signal.aborted) return Promise.resolve();
     return new Promise((resolve) => {
       const done = (): void => {
-        clearTimeout(timer);
         signal.removeEventListener("abort", done);
         this.wakes.delete(playerId);
         resolve();
       };
-      const timer = setTimeout(done, ms);
       signal.addEventListener("abort", done, { once: true });
       this.wakes.set(playerId, done);
     });

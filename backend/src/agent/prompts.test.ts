@@ -45,13 +45,13 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('READ-ONLY');
     expect(prompt).toContain('chainId 8453');
     expect(prompt).toContain('fromAddress 0xprivywallet');
-    expect(prompt).toContain('you MUST call execute_swap');
+    expect(prompt).toContain('execute_swap is the only tool that moves funds');
   });
 
   it('omits the MCP guidance and uses get_swap_quote when MCP is off', () => {
     const prompt = buildSystemPrompt(baseInput({ lifiMcpEnabled: false }));
     expect(prompt).not.toContain('LI.FI MCP tools');
-    expect(prompt).toContain('Use get_swap_quote to preview before execute_swap');
+    expect(prompt).toContain('Use get_swap_quote to preview every trade before execute_swap');
   });
 
   it('falls back to a conservative default when no strategy is provided', () => {
@@ -59,9 +59,9 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('No strategy provided');
   });
 
-  it('describes continuous trading + the wait tool and drops the T-5min / unwind-before-deadline language', () => {
+  it('describes instruction-driven turns + the wait tool and drops the T-5min / unwind-before-deadline language', () => {
     const prompt = buildSystemPrompt(baseInput());
-    expect(prompt).toContain('trade CONTINUOUSLY');
+    expect(prompt).toContain('STOP and wait quietly');
     expect(prompt).toContain('`wait`');
     expect(prompt).toContain('AUTO-LIQUIDATED to USDC');
     expect(prompt).not.toMatch(/fewer than \d+ seconds remain/);

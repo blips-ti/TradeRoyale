@@ -6,7 +6,7 @@ const DEFAULT_ENTRY_TOKEN_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
 // Base mainnet USDC + WETH — the LI.FI-tradeable set (entry token first).
 const DEFAULT_TRADEABLE_TOKENS =
   '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913,0x4200000000000000000000000000000000000006';
-const DEFAULT_AGENT_MODEL = 'claude-opus-4-8';
+const DEFAULT_AGENT_MODEL = 'claude-sonnet-4-6';
 // Continuous per-player loop pacing: floor between turns (cost backstop), default wait when the
 // agent doesn't call the wait tool, and an optional hard turn cap per player per game (0 = off).
 const DEFAULT_MIN_LOOP_INTERVAL_MS = 1_000;
