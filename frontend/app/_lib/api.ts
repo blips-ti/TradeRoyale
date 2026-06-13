@@ -10,6 +10,7 @@ import type {
   PublicPlayer,
   Settlement,
   Trade,
+  UnlinkAccountExport,
   UnlockResult,
 } from "./types";
 
@@ -68,6 +69,12 @@ export const api = {
 
   getPlayer: (gameId: string, playerId: string) =>
     req<PlayerDetail>(`/games/${gameId}/players/${playerId}`),
+
+  // Owner-only: the caller's Unlink account keys, to fund their own vault from the browser.
+  getUnlinkAccount: (gameId: string, playerId: string) =>
+    req<{ account: UnlinkAccountExport }>(
+      `/games/${gameId}/players/${playerId}/unlink-account`,
+    ).then((r) => r.account),
 
   getTrades: (gameId: string) => req<{ trades: Trade[] }>(`/games/${gameId}/trades`).then((r) => r.trades),
 

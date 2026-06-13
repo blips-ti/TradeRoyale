@@ -3,10 +3,12 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowRight, Check, Clock, Copy, Lock, ShieldCheck, Users, Wallet, WifiOff, X } from "lucide-react";
+import { ArrowRight, Check, Clock, Lock, ShieldCheck, Users, Wallet, WifiOff, X } from "lucide-react";
+import { useWallets } from "@privy-io/react-auth";
 import { useAuth } from "@/app/_lib/auth";
 import { useGame } from "@/app/_lib/store";
 import { api } from "@/app/_lib/api";
+import { depositEntry, type DepositPhase } from "@/app/_lib/unlinkDeposit";
 import type { Game, JoinResult, PublicPlayer } from "@/app/_lib/types";
 import { bannerSeedFor, gameName } from "@/app/_lib/gameView";
 import { bucketOf, formatUsd, livePoolBaseUnits } from "@/app/_lib/units";
@@ -234,14 +236,17 @@ function BuyInSheet({
   defaultAgentName: string;
   ownerAddress: string | null;
   onClose: () => void;
-  onJoined: (res: JoinResult, agentName: string) => void;
+  onJoined: (res: JoinResult) => void;
   onContinue: () => void;
 }) {
+  const { wallets } = useWallets();
   const [agentName, setAgentName] = useState(defaultAgentName);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [joined, setJoined] = useState<JoinResult | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [depositing, setDepositing] = useState(false);
+  const [phase, setPhase] = useState<DepositPhase | null>(null);
+  const [confirmed, setConfirmed] = useState(false);
 
   const buyIn = async () => {
     setLoading(true);
@@ -251,7 +256,7 @@ function BuyInSheet({
         displayName: agentName.trim() || "Agent",
       });
       setJoined(res);
-      onJoined(res, agentName.trim() || "Agent");
+      onJoined(res);
     } catch (e) {
       setError((e as Error).message || "Couldn't join");
     } finally {
@@ -259,12 +264,50 @@ function BuyInSheet({
     }
   };
 
-  const copy = () => {
+  const PHASE_LABEL: Record<DepositPhase, string> = {
+    preparing: "Preparing…",
+    registering: "Registering your vault…",
+    depositing: "Confirm in your wallet…",
+    confirming: "Confirming deposit…",
+  };
+
+  // Polls the BE until its DepositWatcher confirms the shielded balance reached the entry amount.
+  const waitForConfirmed = async (pid: string) => {
+    for (let i = 0; i < 30; i++) {
+      const detail = await api.getPlayer(gameId, pid).catch(() => null);
+      if (detail?.player.depositStatus === "confirmed") return;
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+    throw new Error("Deposit not detected yet — give it a moment, then retry.");
+  };
+
+  const runDeposit = async () => {
     if (!joined) return;
-    navigator.clipboard?.writeText(joined.unlinkAddress).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
-    });
+    setDepositing(true);
+    setError(null);
+    setPhase("preparing");
+    try {
+      const exported = await api.getUnlinkAccount(gameId, joined.playerId);
+      const wallet =
+        wallets.find((w) => w.address?.toLowerCase() === ownerAddress?.toLowerCase()) ?? wallets[0];
+      if (!wallet) throw new Error("No wallet connected to deposit from");
+      const provider = (await wallet.getEthereumProvider()) as Parameters<typeof depositEntry>[0]["provider"];
+      await depositEntry({
+        playerId: joined.playerId,
+        token: joined.deposit.token,
+        amount: joined.deposit.amount,
+        exported,
+        provider,
+        onPhase: setPhase,
+      });
+      await waitForConfirmed(joined.playerId);
+      setConfirmed(true);
+    } catch (e) {
+      setError((e as Error).message || "Deposit failed");
+    } finally {
+      setDepositing(false);
+      setPhase(null);
+    }
   };
 
   return (
@@ -326,31 +369,44 @@ function BuyInSheet({
               {loading ? <><Spinner /> Creating your vault…</> : `Buy in ${entryLabel}`}
             </Button>
           </>
+        ) : confirmed ? (
+          <>
+            <div className="flex items-center gap-2 rounded-card bg-[color:var(--color-profit)]/12 px-4 py-3 text-[13px] text-[color:var(--color-profit)]">
+              <Check className="h-4 w-4" /> Deposit confirmed — your vault is funded.
+            </div>
+            <Button fullWidth className="mt-4" onClick={onContinue}>
+              Set up your agent <ArrowRight className="h-4 w-4" />
+            </Button>
+          </>
         ) : (
           <>
             <div className="flex items-center gap-2 rounded-card bg-[color:var(--color-profit)]/12 px-4 py-3 text-[13px] text-[color:var(--color-profit)]">
-              <Check className="h-4 w-4" /> Vault created — you&apos;re registered.
+              <Check className="h-4 w-4" /> Vault created — fund it to lock your seat.
             </div>
 
-            <label className="mt-4 mb-1.5 block px-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted">
-              Deposit {entryLabel} to your private vault
-            </label>
-            <button
-              onClick={copy}
-              className="flex w-full items-center gap-3 rounded-card border border-[color:var(--color-line)] bg-[color:var(--color-surface-2)] px-4 py-3 text-left"
-            >
-              <span className="min-w-0 flex-1 truncate font-mono text-[13px] text-fg">
-                {copied ? "copied ✓" : joined.unlinkAddress}
-              </span>
-              <Copy className="h-4 w-4 shrink-0 text-muted" />
-            </button>
-            <p className="mt-2 px-1 text-[12px] text-muted">
-              The private Unlink deposit ({entryLabel} USDC) confirms your entry — wiring that step next. You can
-              set up your agent now; it goes live the moment your deposit confirms.
-            </p>
+            <div className="mt-4 rounded-card bg-[color:var(--color-surface-2)] p-4">
+              <div className="flex items-center justify-between">
+                <span className="flex items-center gap-2 text-[14px] text-muted">
+                  <Wallet className="h-4 w-4" /> Deposit to your private vault
+                </span>
+                <span className="font-display text-[22px] font-bold text-[color:var(--color-lime)] tnum">{entryLabel}</span>
+              </div>
+              <p className="mt-2 text-[12px] text-muted">
+                Funds move from your wallet into the Unlink shielded pool. Your agent trades from a
+                wallet linked to it the moment the deposit confirms.
+              </p>
+            </div>
 
-            <Button fullWidth className="mt-4" onClick={onContinue}>
-              Set up your agent <ArrowRight className="h-4 w-4" />
+            {error && <p className="mt-3 text-center text-[12.5px] text-[color:var(--color-loss)]">{error}</p>}
+
+            <Button fullWidth className="mt-4" onClick={runDeposit} disabled={depositing}>
+              {depositing ? (
+                <>
+                  <Spinner /> {phase ? PHASE_LABEL[phase] : "Depositing…"}
+                </>
+              ) : (
+                `Deposit ${entryLabel}`
+              )}
             </Button>
           </>
         )}

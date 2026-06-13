@@ -108,6 +108,17 @@ export function buildGameRoutes(
     },
   );
 
+  // Owner-only: the caller's own Unlink account keys, used by the FE to deposit entry funds
+  // into their BE-custodied vault. More specific than "/:playerId", so declared before it.
+  router.get("/:gameId/players/:playerId/unlink-account", requireAuth(), async (c) => {
+    const account = await service.exportUnlinkAccount(
+      c.req.param("gameId"),
+      c.req.param("playerId"),
+      c.get("userId"),
+    );
+    return c.json({ account });
+  });
+
   router.get("/:gameId/players/:playerId", async (c) => {
     const gameId = c.req.param("gameId");
     const playerId = c.req.param("playerId");

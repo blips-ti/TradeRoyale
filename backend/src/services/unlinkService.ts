@@ -8,6 +8,7 @@ import {
   account,
   createUnlinkClient,
   evm,
+  type AccountExportPayload,
   type EvmProvider,
   type UnlinkClient,
 } from "@unlink-xyz/sdk/client";
@@ -21,6 +22,9 @@ import { privyService, PrivyService } from "./privyService.js";
 // Derived from the client surface so it tracks canary drift without a separate import
 // (the SDK does not re-export TransactionListData from its public entry points).
 type UnlinkTransactions = Awaited<ReturnType<UnlinkClient["getTransactions"]>>;
+
+// Re-exported so callers stay decoupled from the SDK entry point (all drift contained here).
+export type { AccountExportPayload } from "@unlink-xyz/sdk/client";
 
 export interface GameAccount {
   unlinkAddress: string;
@@ -155,6 +159,16 @@ export class UnlinkService {
   ): Promise<UnlinkTransactions> {
     const client = this.getOrBuildClient(context.playerId, context);
     return client.getTransactions();
+  }
+
+  // Exports the player's Unlink account keys so the OWNER can fund their own vault from the
+  // browser (deposit-only use; auth-gated to the owner upstream). Custody is unchanged — the BE
+  // keeps the encrypted secret and still reads balances / withdraws to the agent wallet.
+  async exportAccount(context: PlayerClientContext): Promise<AccountExportPayload> {
+    const mnemonic = this.decryptContext(context);
+    const unlinkAccount = account.fromMnemonic({ mnemonic });
+    const keys = await unlinkAccount.getAccountKeys();
+    return account.export(keys);
   }
 
   async transfer(request: TransferRequest): Promise<void> {

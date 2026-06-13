@@ -11,7 +11,7 @@ import { SettlementRepository } from "../repositories/settlementRepository.js";
 import { TradeRepository } from "../repositories/tradeRepository.js";
 import { gameEventHub, GameEventHub } from "../ws/gameEventHub.js";
 import { privyService, PrivyService } from "./privyService.js";
-import { unlinkService, UnlinkService } from "./unlinkService.js";
+import { unlinkService, UnlinkService, type AccountExportPayload } from "./unlinkService.js";
 
 const DEFAULT_DURATION_SEC = 3600;
 const DEFAULT_MAX_PLAYERS = 10;
@@ -144,6 +144,21 @@ export class GameService {
       throw new GameNotFoundError("Player not found in this game");
     }
     return player;
+  }
+
+  // Owner-only: the player's own Unlink account keys, so the FE can deposit the entry funds
+  // into the BE-custodied vault from the user's wallet (1-tx deposit). Owner-checked.
+  async exportUnlinkAccount(
+    gameId: string,
+    playerId: string,
+    ownerId: string,
+  ): Promise<AccountExportPayload> {
+    const player = await this.getPlayer(gameId, playerId);
+    this.assertOwner(player, ownerId);
+    return this.unlink.exportAccount({
+      unlinkAddress: player.unlinkAddress,
+      encMnemonic: player.encMnemonic,
+    });
   }
 
   // Strategy is editable only while the game is still in the lobby — once live, the prompt

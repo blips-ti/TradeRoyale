@@ -44,6 +44,13 @@ export type JoinResult = {
   deposit: { token: string; amount: string; instructions: string };
 };
 
+/** Owner-only Unlink account keys (GET …/unlink-account) — used to deposit from the browser. */
+export type UnlinkAccountExport = {
+  version: 1;
+  spendingPrivateKey: string;
+  viewingPrivateKey: string;
+};
+
 export type Trade = {
   id: string;
   gameId: string;

@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@privy-io/react-auth": "^2.13.1",
+    "@unlink-xyz/sdk": "^0.3.0-canary.598",
     "clsx": "^2.1.1",
     "framer-motion": "^12.23.0",
     "lucide-react": "^0.460.0",
