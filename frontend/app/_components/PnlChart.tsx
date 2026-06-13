@@ -8,38 +8,7 @@ export type Series = {
   points: number[]; // pnl % over time
 };
 
-/** Build initial series: you + opponents, each seeded near 0. */
-export function buildSeries(
-  you: { id: string; name: string },
-  opponents: { id: string; name: string }[],
-): Series[] {
-  const palette = ["#34D6E0", "#FF36A3", "#ff8a3d", "#3da5ff", "#8B909C", "#A6D61F"];
-  const seed = () => Array.from({ length: 8 }, () => (Math.random() - 0.5) * 4);
-  return [
-    { id: you.id, name: you.name, color: "#C5F72B", you: true, points: seed() },
-    ...opponents.map((o, i) => ({
-      id: o.id,
-      name: o.name,
-      color: palette[i % palette.length],
-      points: seed(),
-    })),
-  ];
-}
-
-/** Advance every series one random-walk step; keep a scrolling window. */
-export function stepSeries(series: Series[], window = 44): Series[] {
-  return series.map((s) => {
-    const last = s.points[s.points.length - 1] ?? 0;
-    const drift = s.you ? 0.22 : 0;
-    const step = (Math.random() - 0.5) * (s.you ? 2.2 : 3.0) + drift;
-    const next = Math.max(-40, Math.min(70, last + step));
-    const pts = [...s.points, next];
-    if (pts.length > window) pts.shift();
-    return { ...s, points: pts };
-  });
-}
-
-/** Render-only Polymarket-style multi-line chart. */
+/** Render-only Polymarket-style multi-line chart. Data comes from real NAV events. */
 export function PnlChartView({ series, height = 200 }: { series: Series[]; height?: number }) {
   const all = series.flatMap((s) => s.points);
   const min = Math.min(-5, ...all);

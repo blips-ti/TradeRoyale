@@ -101,7 +101,13 @@ export class AgentRunner {
       try {
         const fresh = (await this.players.get(player.id)) ?? player;
         const result = await this.agent.runTick(game, fresh, gameOwnedAddresses, signal);
-        await this.players.save({ ...fresh, lastAgentSummary: result.summary, touchedTokens: result.touchedTokens });
+        // Clear any live instruction — runTick injected it into this turn; it must not repeat.
+        await this.players.save({
+          ...fresh,
+          lastAgentSummary: result.summary,
+          touchedTokens: result.touchedTokens,
+          pendingInstruction: undefined,
+        });
         waitSeconds = result.requestedWaitSeconds ?? this.defaultWaitSeconds;
         consecutiveFailures = 0;
         turns += 1;

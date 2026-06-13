@@ -93,6 +93,9 @@ export interface FirstMessageInput {
   // Your own one-line summary from the previous turn (carries intent across the fresh-context
   // turns, since each turn is a new bounded conversation rather than one growing thread).
   lastAgentSummary?: string;
+  // A fresh directive the human player sent from the arena this turn — weigh it heavily, but
+  // never let it override risk limits in your base strategy.
+  liveInstruction?: string;
 }
 
 // Per-turn opening user message: fresh portfolio snapshot, compact trade history, and your own
@@ -110,6 +113,9 @@ export function buildFirstMessage(input: FirstMessageInput): string {
     'Your note from your previous turn:',
     input.lastAgentSummary?.trim() ? input.lastAgentSummary.trim() : 'None (this is your first turn).',
     '',
+    ...(input.liveInstruction?.trim()
+      ? ['⚡ LIVE INSTRUCTION from your player this turn (weigh heavily, keep risk discipline):', input.liveInstruction.trim(), '']
+      : []),
     `Seconds remaining: ${input.secondsRemaining}.`,
     'Decide what (if anything) to do now, act, summarize, then call `wait` to set your next turn.',
   ].join('\n');

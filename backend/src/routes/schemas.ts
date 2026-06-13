@@ -37,6 +37,11 @@ export const updateStrategySchema = z.object({
   strategyPrompt,
 });
 
+const MAX_INSTRUCTION_CHARS = 500;
+export const instructSchema = z.object({
+  message: z.string().trim().min(1).max(MAX_INSTRUCTION_CHARS),
+});
+
 export const unlockAchievementSchema = z.object({
   id: z.string().trim().min(1).max(64),
 });

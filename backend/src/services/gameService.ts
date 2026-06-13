@@ -146,6 +146,18 @@ export class GameService {
     return player;
   }
 
+  // Owner-only: queue a live instruction the player's agent reads on its next turn (then clears).
+  async setInstruction(input: {
+    gameId: string;
+    playerId: string;
+    ownerId: string;
+    message: string;
+  }): Promise<void> {
+    const player = await this.getPlayer(input.gameId, input.playerId);
+    this.assertOwner(player, input.ownerId);
+    await this.players.save({ ...player, pendingInstruction: input.message });
+  }
+
   // Owner-only: the player's own Unlink account keys, so the FE can deposit the entry funds
   // into the BE-custodied vault from the user's wallet (1-tx deposit). Owner-checked.
   async exportUnlinkAccount(

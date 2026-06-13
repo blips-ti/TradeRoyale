@@ -72,6 +72,7 @@ export class TradingAgent {
       recentTradesSummary: await this.recentTradesSummary(game.id, player.id),
       secondsRemaining,
       lastAgentSummary: player.lastAgentSummary,
+      liveInstruction: player.pendingInstruction,
     });
 
     const tools = buildAgentTools({

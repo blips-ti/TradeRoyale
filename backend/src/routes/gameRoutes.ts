@@ -17,6 +17,7 @@ import {
 } from "../services/unlinkService.js";
 import {
   createGameSchema,
+  instructSchema,
   joinGameSchema,
   listGamesQuerySchema,
   startGameSchema,
@@ -82,6 +83,22 @@ export function buildGameRoutes(
         ownerId: c.get("userId"),
       });
       return c.json({ player: toOwnPlayer(player) });
+    },
+  );
+
+  // Owner-only: send a live instruction to your agent (consumed on its next turn).
+  router.post(
+    "/:gameId/players/:playerId/instruct",
+    requireAuth(),
+    zValidator("json", instructSchema),
+    async (c) => {
+      await service.setInstruction({
+        gameId: c.req.param("gameId"),
+        playerId: c.req.param("playerId"),
+        ownerId: c.get("userId"),
+        message: c.req.valid("json").message,
+      });
+      return c.json({ ok: true });
     },
   );
 

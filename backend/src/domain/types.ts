@@ -41,6 +41,9 @@ export interface Player {
   touchedTokens?: string[];
   // Final text summary from the player's most recent agent tick.
   lastAgentSummary?: string;
+  // A live instruction the owner sent from the arena chat; injected into the next agent turn
+  // then cleared. Lets the player nudge their agent mid-game without changing the base strategy.
+  pendingInstruction?: string;
   // Phase-3 settlement: authoritative on-chain USDC after liquidation (base units), and the
   // independent Octav NAV cross-check (USD decimal string). Set when the game settles.
   finalUsdc?: string;

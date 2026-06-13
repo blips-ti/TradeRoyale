@@ -7,7 +7,9 @@ export type GameEventType =
   | 'funds_released'
   | 'agent_update'
   | 'trade_executed'
-  | 'player_liquidated';
+  | 'player_liquidated'
+  // Per-tick NAV (USD) of a player's trading wallet — drives the live arena chart + standings.
+  | 'portfolio_update';
 
 export interface GameEvent {
   type: GameEventType;
