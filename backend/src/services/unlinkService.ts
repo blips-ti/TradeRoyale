@@ -270,7 +270,12 @@ export class UnlinkService {
         { err: error, unlinkAddress: context.unlinkAddress },
         "[unlink] failed to decrypt mnemonic",
       );
-      throw new Error("Unable to load custodial account");
+      // Surface the crypto error + shape metadata (length + colon-part count) so settlement's
+      // persisted shield.error is diagnosable — NEVER the mnemonic or the encrypted blob itself.
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `Unable to load custodial account: ${reason} (encLen=${context.encMnemonic?.length ?? 0}, parts=${(context.encMnemonic ?? "").split(":").length})`,
+      );
     }
   }
 }

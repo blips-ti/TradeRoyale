@@ -56,10 +56,11 @@ interface PrivyTransactionStatus {
   transaction_hash: string | null;
 }
 
-// A player joins from their own EVM wallet (linked to their Privy DID) — that's where the
-// shielded payout is finally routed. The embedded Privy wallet is the server trading wallet,
-// NOT the depositor, so it is explicitly excluded when resolving this address.
+// The player deposits the entry from their embedded Privy login wallet (wallet_client 'privy'),
+// which is where the payout returns. An external linked wallet ('unknown') is preferred when
+// present; the server's trading wallet is created via wallets().create() and is NOT linked here.
 const EXTERNAL_ETHEREUM_WALLET = 'unknown';
+const EMBEDDED_PRIVY_WALLET = 'privy';
 
 // Sole adapter around @privy-io/node. Each player gets a TEE-backed server wallet that
 // trades publicly on Base; gas is app-sponsored via `sponsor: true` (EIP-7702 + paymaster,
@@ -200,27 +201,35 @@ export class PrivyService {
     }
   }
 
-  // Resolves the user's own funding wallet from their Privy DID for the shielded payout. Picks
-  // the linked EXTERNAL ethereum wallet (wallet_client 'unknown'), never the embedded server
-  // wallet. Returns null when the user has no external EVM wallet linked, so the caller can skip.
+  // Resolves the user's own funding wallet from their Privy DID for the shielded payout. Prefers
+  // a linked EXTERNAL ethereum wallet (wallet_client 'unknown'), falling back to the embedded
+  // Privy login wallet ('privy') the user deposits from. Returns null only with no ethereum wallet.
   async resolveDepositorAddress(ownerId: string): Promise<string | null> {
     try {
       const user = await this.getClient().users()._get(ownerId);
-      const external = user.linked_accounts.find(
+      const ethereumWallets = user.linked_accounts.filter(
         (account) =>
           account.type === 'wallet' &&
           'chain_type' in account &&
           account.chain_type === 'ethereum' &&
-          'wallet_client' in account &&
-          account.wallet_client === EXTERNAL_ETHEREUM_WALLET,
+          'address' in account &&
+          !!account.address,
       );
-      // wallet_client values only (never addresses of unrelated accounts) so we can debug why
-      // the depositor resolves null without leaking linked-wallet PII.
+      const external = ethereumWallets.find(
+        (account) => 'wallet_client' in account && account.wallet_client === EXTERNAL_ETHEREUM_WALLET,
+      );
+      const embedded = ethereumWallets.find(
+        (account) => 'wallet_client' in account && account.wallet_client === EMBEDDED_PRIVY_WALLET,
+      );
+      const selected = external ?? embedded;
+      // wallet_client values only (never addresses of unrelated accounts) so we can debug which
+      // wallet was picked without leaking linked-wallet PII.
       const walletClients = user.linked_accounts
         .filter((account) => account.type === 'wallet' && 'wallet_client' in account)
         .map((account) => ('wallet_client' in account ? account.wallet_client : null));
-      logger.info({ ownerId, walletClients, externalMatch: !!external }, '[privy] resolveDepositorAddress linked accounts');
-      if (external && 'address' in external) return external.address;
+      const source = external ? 'external' : embedded ? 'embedded' : 'none';
+      logger.info({ ownerId, walletClients, source }, '[privy] resolveDepositorAddress linked accounts');
+      if (selected && 'address' in selected) return selected.address;
       return null;
     } catch (error) {
       logger.warn({ ownerId, err: error }, '[privy] resolveDepositorAddress failed');

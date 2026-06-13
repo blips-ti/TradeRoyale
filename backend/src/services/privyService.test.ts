@@ -156,7 +156,7 @@ function buildUsersService(linkedAccounts: LinkedAccount[]): {
 }
 
 describe('PrivyService.resolveDepositorAddress', () => {
-  it("returns the user's external ethereum wallet, never the embedded server wallet", async () => {
+  it("prefers the user's external ethereum wallet when both external and embedded are linked", async () => {
     const { service, getUser } = buildUsersService([
       { type: 'wallet', chain_type: 'ethereum', wallet_client: 'privy', address: EMBEDDED_WALLET },
       { type: 'wallet', chain_type: 'ethereum', wallet_client: 'unknown', address: EXTERNAL_WALLET },
@@ -166,11 +166,11 @@ describe('PrivyService.resolveDepositorAddress', () => {
     expect(address).toBe(EXTERNAL_WALLET);
   });
 
-  it('returns null when the user only has an embedded Privy wallet linked', async () => {
+  it('falls back to the embedded Privy login wallet when no external wallet is linked', async () => {
     const { service } = buildUsersService([
       { type: 'wallet', chain_type: 'ethereum', wallet_client: 'privy', address: EMBEDDED_WALLET },
     ]);
-    expect(await service.resolveDepositorAddress(DID)).toBeNull();
+    expect(await service.resolveDepositorAddress(DID)).toBe(EMBEDDED_WALLET);
   });
 
   it('returns null when no ethereum wallet is linked at all', async () => {
