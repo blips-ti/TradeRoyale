@@ -8,6 +8,7 @@ import { logger } from '../logger.js';
 import { lifiService } from '../services/lifiService.js';
 import { octavService } from '../services/octavService.js';
 import { unlinkService, type UnlinkService } from '../services/unlinkService.js';
+import { viemReader } from '../services/viemClient.js';
 
 interface DependencyStatus {
   ok: boolean;
@@ -71,8 +72,16 @@ export function buildHealthRoutes(unlink: UnlinkService = unlinkService): Hono {
         lifiMcp: { enabled: mcp, url: env.LIFI_MCP_URL, authorizationToken: env.LIFI_API_KEY },
       });
 
+    const sampleAddr = '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045';
     const lifi = await tryStep(() => lifiService.getTokens());
-    const octav = await tryStep(() => octavService.getPortfolioNav('0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045'));
+    const lifiPrices = await tryStep(() => lifiService.getPrices([env.ENTRY_TOKEN_ADDRESS]));
+    // The on-chain reads runTick does BEFORE any Anthropic call — the untested gap. If this
+    // fails, BASE_RPC_URL (default public mainnet.base.org) is rate-limiting/blocking the reads.
+    const viemRpc = await tryStep(async () => {
+      await viemReader.getNativeBalance(sampleAddr);
+      await viemReader.getErc20Balances([env.ENTRY_TOKEN_ADDRESS], sampleAddr);
+    });
+    const octav = await tryStep(() => octavService.getPortfolioNav(sampleAddr));
     const anthropic = await tryStep(() => getAnthropicClient().beta.messages.toolRunner(buildTest(false)).runUntilDone());
     const anthropicMcp = env.AGENT_USE_LIFI_MCP
       ? await tryStep(() => getAnthropicClient().beta.messages.toolRunner(buildTest(true)).runUntilDone())
@@ -81,10 +90,13 @@ export function buildHealthRoutes(unlink: UnlinkService = unlinkService): Hono {
     return c.json({
       model: env.AGENT_MODEL,
       lifiMcpEnabled: env.AGENT_USE_LIFI_MCP,
+      baseRpcUrl: env.BASE_RPC_URL,
       hasAnthropicKey: Boolean(env.ANTHROPIC_API_KEY),
       hasOctavKey: Boolean(env.OCTAV_API_KEY),
       hasLifiKey: Boolean(env.LIFI_API_KEY),
       lifi,
+      lifiPrices,
+      viemRpc,
       octav,
       anthropic,
       anthropicMcp,
