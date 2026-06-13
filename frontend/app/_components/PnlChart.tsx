@@ -37,8 +37,13 @@ export function PnlChartView({
   };
   const yv = (v: number) => pad + (1 - (v - min) / (max - min || 1)) * (H - pad * 2);
 
-  const toPath = (pts: SeriesPoint[]) =>
-    pts.map((p, i) => `${i === 0 ? "M" : "L"}${xt(p.t).toFixed(1)} ${yv(p.v).toFixed(1)}`).join(" ");
+  const toPath = (pts: SeriesPoint[], dy: number) =>
+    pts.map((p, i) => `${i === 0 ? "M" : "L"}${xt(p.t).toFixed(1)} ${(yv(p.v) + dy).toFixed(1)}`).join(" ");
+
+  // Spread coincident lines a few px apart vertically so players with identical NAVs still show
+  // as separate lines (purely visual — symmetric around the true value). Stable per series id.
+  const GAP = 2.5;
+  const offsetById = new Map(series.map((s, i) => [s.id, (i - (series.length - 1) / 2) * GAP]));
 
   const zeroY = yv(0);
   const ordered = [...series].sort((a, b) => (a.you ? 1 : 0) - (b.you ? 1 : 0));
@@ -49,10 +54,11 @@ export function PnlChartView({
       {ordered.map((s) => {
         if (s.points.length === 0) return null;
         const last = s.points[s.points.length - 1];
+        const dy = offsetById.get(s.id) ?? 0;
         return (
           <g key={s.id}>
             <path
-              d={toPath(s.points)}
+              d={toPath(s.points, dy)}
               fill="none"
               stroke={s.color}
               strokeWidth={s.you ? 3 : 2}
@@ -60,7 +66,7 @@ export function PnlChartView({
               strokeLinejoin="round"
               strokeLinecap="round"
             />
-            <circle cx={xt(last.t)} cy={yv(last.v)} r={s.you ? 3.5 : 2.5} fill={s.color} fillOpacity={s.you ? 1 : 0.95} />
+            <circle cx={xt(last.t)} cy={yv(last.v) + dy} r={s.you ? 3.5 : 2.5} fill={s.color} fillOpacity={s.you ? 1 : 0.95} />
           </g>
         );
       })}
