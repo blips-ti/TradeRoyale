@@ -30,9 +30,12 @@ function Dashboard() {
   const liveList = visible.filter((v) => v.bucket === "live").sort((a, b) => (a.endsAt ?? 0) - (b.endsAt ?? 0));
   const endedList = visible.filter((v) => v.bucket === "ended").sort((a, b) => (b.endsAt ?? 0) - (a.endsAt ?? 0));
 
-  const liveCount = views.filter((v) => v.bucket === "live").length;
-  const totalPlayers = views.reduce((a, v) => a + v.playerCount, 0);
-  const topPot = views.reduce((a, v) => Math.max(a, v.prizePoolUsd), 0);
+  // Active games only — a user is in at most one non-ended game, so this is the real player
+  // count (ended games' leftover player records would otherwise inflate it).
+  const active = views.filter((v) => v.bucket !== "ended");
+  const liveCount = active.filter((v) => v.bucket === "live").length;
+  const totalPlayers = active.reduce((a, v) => a + v.playerCount, 0);
+  const topPot = active.reduce((a, v) => Math.max(a, v.prizePoolUsd), 0);
 
   return (
     <div className="flex flex-1 flex-col gap-4 pt-1">
