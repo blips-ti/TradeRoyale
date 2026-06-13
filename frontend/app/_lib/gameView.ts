@@ -30,6 +30,10 @@ export function gameName(id: string): string {
   return `${ADJ[h % ADJ.length]} ${NOUN[(h >>> 8) % NOUN.length]}`;
 }
 
+export function bannerSeedFor(id: string): number {
+  return hash(id) >>> 16;
+}
+
 export function gameToView(game: Game, playerCount: number): MatchView {
   const entryUsd = baseUnitsToNumber(game.entryAmount);
   return {
