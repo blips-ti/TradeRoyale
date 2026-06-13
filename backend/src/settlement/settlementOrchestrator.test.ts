@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Game, Player, PlayerResult, Settlement } from '../domain/types.js';
 import type { GameRepository } from '../repositories/gameRepository.js';
 import type { PlayerRepository } from '../repositories/playerRepository.js';
+import type { SettlementRepository } from '../repositories/settlementRepository.js';
 import type { LifiService } from '../services/lifiService.js';
 import type { OctavService } from '../services/octavService.js';
 import type { TradeExecutor } from '../services/tradeExecutor.js';
@@ -53,6 +54,9 @@ interface Deps {
   octav: OctavService;
   settlements: SettlementService;
   hub: GameEventHub;
+  settlementRepo: SettlementRepository;
+  // In-memory Redis stand-in: the last settlement the orchestrator persisted, for diagnostics asserts.
+  saved: { current: Settlement | null };
   broadcasts: Array<{ type: string; data: Record<string, unknown> }>;
 }
 
@@ -67,7 +71,17 @@ function buildDeps(options: {
     getMany: vi.fn(async () => options.players),
     save: vi.fn(async () => undefined),
   } as unknown as PlayerRepository;
-  const executor = { executeSwap: vi.fn(async () => ({ txHash: '0xliq', status: 'confirmed' })) } as unknown as TradeExecutor;
+  const executor = {
+    executeSwap: vi.fn(async (_wallet: unknown, input: { fromToken: string; fromAmount: string }) => ({
+      txHash: '0xliq',
+      status: 'confirmed',
+      fromToken: input.fromToken,
+      toToken: USDC,
+      fromAmount: input.fromAmount,
+      toAmountMin: '1990000',
+      tool: 'test-dex',
+    })),
+  } as unknown as TradeExecutor;
   const viem = {
     // Per-token liquidation reads stay per-call; final USDC scoring is ONE multicall across owners.
     getErc20Balance: vi.fn(async (token: string, _owner: string) => options.tokenBalances[token.toLowerCase()] ?? '0'),
@@ -97,7 +111,12 @@ function buildDeps(options: {
   const hub = {
     broadcast: vi.fn((type: string, _id: string, data: Record<string, unknown>) => void broadcasts.push({ type, data })),
   } as unknown as GameEventHub;
-  return { games, players, executor, viem, lifi, octav, settlements, hub, broadcasts };
+  const saved: { current: Settlement | null } = { current: null };
+  const settlementRepo = {
+    save: vi.fn(async (settlement: Settlement) => void (saved.current = settlement)),
+    get: vi.fn(async () => saved.current),
+  } as unknown as SettlementRepository;
+  return { games, players, executor, viem, lifi, octav, settlements, hub, settlementRepo, saved, broadcasts };
 }
 
 function build(deps: Deps): SettlementOrchestrator {
@@ -110,6 +129,7 @@ function build(deps: Deps): SettlementOrchestrator {
     deps.octav,
     deps.settlements,
     deps.hub,
+    deps.settlementRepo,
     USDC,
     MIN_USDC,
   );
@@ -181,5 +201,56 @@ describe('SettlementOrchestrator.settle', () => {
     expect(owners.sort()).toEqual([p1.privyWalletAddress, p2.privyWalletAddress].sort());
     // The payout actually runs now (today nothing called it).
     expect(deps.settlements.executePayout).toHaveBeenCalledTimes(1);
+  });
+
+  it('persists per-token liquidation diagnostics (liquidated / skipped_zero / skipped_dust)', async () => {
+    const ZERO = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+    const p = player('p1', [USDC, WETH, DUST, ZERO]);
+    const deps = buildDeps({
+      players: [p],
+      finalUsdc: { [p.privyWalletAddress!]: '3000000' },
+      // WETH non-dust, DUST below floor, ZERO has no balance, USDC is the entry token (excluded).
+      tokenBalances: { [WETH]: '1000000000000000000', [DUST]: '1', [ZERO]: '0' },
+    });
+    await build(deps).settle(game);
+    expect(deps.settlementRepo.save).toHaveBeenCalled();
+    const liquidations = deps.saved.current?.diagnostics?.liquidations ?? [];
+    const byToken = Object.fromEntries(liquidations.map((l) => [l.token, l]));
+    expect(byToken[WETH]).toMatchObject({ playerId: 'p1', status: 'liquidated', balance: '1000000000000000000', fromAmount: '1000000000000000000', toAmountMin: '1990000' });
+    expect(byToken[DUST]).toMatchObject({ status: 'skipped_dust', balance: '1' });
+    expect(byToken[ZERO]).toMatchObject({ status: 'skipped_zero', balance: '0' });
+    // The entry token is never a liquidation candidate, so it must not appear in diagnostics.
+    expect(byToken[USDC]).toBeUndefined();
+  });
+
+  it('captures a swap rejection MESSAGE as a failed TokenLiquidation, not just a boolean', async () => {
+    const p = player('p1', [USDC, WETH]);
+    const deps = buildDeps({
+      players: [p],
+      finalUsdc: { [p.privyWalletAddress!]: '1000000' },
+      tokenBalances: { [WETH]: '1000000000000000000' },
+    });
+    deps.executor.executeSwap = vi.fn(async () => {
+      throw new Error('LI.FI no route');
+    }) as unknown as TradeExecutor['executeSwap'];
+    await build(deps).settle(game);
+    const failed = (deps.saved.current?.diagnostics?.liquidations ?? []).find((l) => l.token === WETH);
+    expect(failed).toMatchObject({ playerId: 'p1', token: WETH, status: 'failed', error: 'LI.FI no route' });
+  });
+
+  it('persists settleError and rethrows when settlement crashes mid-run', async () => {
+    const p = player('p1', [USDC]);
+    const deps = buildDeps({
+      players: [p],
+      finalUsdc: { [p.privyWalletAddress!]: '1000000' },
+      tokenBalances: {},
+    });
+    // buildSettlement throws AFTER liquidation/scoring; settle must persist the error and rethrow.
+    deps.settlements.buildSettlement = vi.fn(async () => {
+      throw new Error('boom in buildSettlement');
+    }) as unknown as SettlementService['buildSettlement'];
+    await expect(build(deps).settle(game)).rejects.toThrow('boom in buildSettlement');
+    expect(deps.saved.current?.diagnostics?.settleError).toContain('boom in buildSettlement');
+    expect(deps.saved.current?.gameId).toBe('g1');
   });
 });

@@ -95,6 +95,29 @@ export interface PayoutTransfer {
   ok: boolean;
 }
 
+// Outcome of one (playerId, token) liquidation attempt during Phase-3 settlement, captured for
+// API-readable diagnostics. 'liquidated' swapped to USDC; 'skipped_zero'/'skipped_dust' held no
+// liquidatable balance; 'failed' carries the swap-rejection error message (not just a boolean).
+export type TokenLiquidationStatus = 'liquidated' | 'skipped_zero' | 'skipped_dust' | 'failed';
+
+export interface TokenLiquidation {
+  playerId: string;
+  token: string;
+  status: TokenLiquidationStatus;
+  balance: string;
+  fromAmount?: string;
+  toAmountMin?: string;
+  error?: string;
+}
+
+// API-readable settlement diagnostics persisted on the record so settlement failures are visible
+// via GET /games/:gameId/results without log access. liquidations is the per-token outcome trail;
+// settleError captures a thrown mid-settle crash (message + first stack lines).
+export interface SettlementDiagnostics {
+  liquidations: TokenLiquidation[];
+  settleError?: string;
+}
+
 // Persisted settlement record (tr:game:{gameId}:settlement). After scoring, executePayout
 // consolidates every loser's USDC into the winner's Privy wallet (winner-take-all, public).
 export interface Settlement {
@@ -109,6 +132,8 @@ export interface Settlement {
   // Audit of routing the winner's pot through Unlink to their own funding wallet; set by
   // executePayout after consolidation. Absent when there is no winner.
   shield?: ShieldResult;
+  // API-readable settlement diagnostics: per-token liquidation outcomes + any thrown settle error.
+  diagnostics?: SettlementDiagnostics;
 }
 
 // Whether a trade is a plain swap or an arbitrary same-chain protocol interaction (zap).
