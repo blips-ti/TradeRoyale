@@ -28,6 +28,7 @@ function Dashboard() {
   // Ongoing (lobby): fullest first. Live: least time remaining.
   const ongoing = visible.filter((v) => v.bucket === "ongoing").sort((a, b) => b.playerCount - a.playerCount);
   const liveList = visible.filter((v) => v.bucket === "live").sort((a, b) => (a.endsAt ?? 0) - (b.endsAt ?? 0));
+  const endedList = visible.filter((v) => v.bucket === "ended").sort((a, b) => (b.endsAt ?? 0) - (a.endsAt ?? 0));
 
   const liveCount = views.filter((v) => v.bucket === "live").length;
   const totalPlayers = views.reduce((a, v) => a + v.playerCount, 0);
@@ -103,6 +104,18 @@ function Dashboard() {
               </Reveal>
               {liveList.map((m, i) => (
                 <Reveal key={m.id} delay={0.14 + i * 0.04}>
+                  <MatchCard match={m} now={now} joinedGameId={joinedMatchId} />
+                </Reveal>
+              ))}
+            </>
+          )}
+          {endedList.length > 0 && (
+            <>
+              <Reveal delay={0.16}>
+                <SectionHead title="Ended" count={endedList.length} />
+              </Reveal>
+              {endedList.map((m, i) => (
+                <Reveal key={m.id} delay={0.18 + i * 0.04}>
                   <MatchCard match={m} now={now} joinedGameId={joinedMatchId} />
                 </Reveal>
               ))}

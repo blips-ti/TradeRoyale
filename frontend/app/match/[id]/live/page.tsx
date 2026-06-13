@@ -210,6 +210,14 @@ export default function LivePage() {
     };
   });
 
+  // Show the entry USDC right away (until Octav's first 60s snapshot replaces it with real holdings).
+  const displayHoldings: Holding[] =
+    holdings.length > 0
+      ? holdings
+      : live && playerId
+        ? [{ symbol: "USDC", name: "USD Coin", valueUsd: String(myNav), balance: String(myNav), priceUsd: "1", contract: game.entryToken, chain: "base" }]
+        : [];
+
   const send = async () => {
     const text = draft.trim();
     if (!text || !playerId || sending || !canInstruct) return;
@@ -299,11 +307,11 @@ export default function LivePage() {
         </div>
 
         {/* your wallet (Octav holdings) */}
-        {holdings.length > 0 && (
+        {displayHoldings.length > 0 && (
           <div className="rounded-card border border-[color:var(--color-line)] bg-[color:var(--color-surface)] p-3">
             <p className="px-1 pb-2 text-[11px] uppercase tracking-[0.14em] text-muted">Your wallet</p>
             <div className="flex gap-2 overflow-x-auto no-scrollbar">
-              {holdings.map((h) => (
+              {displayHoldings.map((h) => (
                 <div
                   key={`${h.chain}:${h.contract}`}
                   className="flex shrink-0 items-center gap-2 rounded-pill border border-[color:var(--color-line)] bg-[color:var(--color-surface-2)] px-2.5 py-1.5"
