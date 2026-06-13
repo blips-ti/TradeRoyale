@@ -9,7 +9,7 @@ import { useGame } from "@/app/_lib/store";
 import { api } from "@/app/_lib/api";
 import { useMatchView } from "@/app/_lib/useMatchView";
 import { useGameSocket } from "@/app/_lib/useGameSocket";
-import type { GameEvent, PublicPlayer } from "@/app/_lib/types";
+import type { GameEvent, PlayerResult, PublicPlayer } from "@/app/_lib/types";
 import { usd } from "@/app/_lib/format";
 import { baseUnitsToNumber } from "@/app/_lib/units";
 import { formatDelta, useNow } from "@/app/_lib/useNow";
@@ -44,7 +44,11 @@ export default function LivePage() {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
-  const [ended, setEnded] = useState<{ winnerPlayerId: string | null; potUsd: number } | null>(null);
+  const [settled, setSettled] = useState<{
+    winnerPlayerId: string | null;
+    potUsd: number;
+    results: PlayerResult[];
+  } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const nameById = useMemo(() => {
@@ -72,10 +76,11 @@ export default function LivePage() {
         setMessages((m) => [...m, { role: "system", text: `↗ executed a ${e.data.kind ?? "trade"}` }]);
       }
       if (e.type === "game_ended") {
-        const results = (e.data.results as { playerId: string }[] | undefined) ?? [];
-        setEnded({
+        const results = (e.data.results as PlayerResult[] | undefined) ?? [];
+        setSettled({
           winnerPlayerId: results[0]?.playerId ?? null,
-          potUsd: entryUsd * players.length,
+          potUsd: entryUsd * Math.max(results.length, players.length),
+          results,
         });
       }
     },
@@ -101,10 +106,15 @@ export default function LivePage() {
     api
       .getResults(params.id)
       .then((s) => {
-        if (s) setEnded({ winnerPlayerId: s.winnerPlayerId, potUsd: baseUnitsToNumber(s.prizePoolUsdc) });
+        if (s)
+          setSettled({
+            winnerPlayerId: s.winnerPlayerId,
+            potUsd: entryUsd * Math.max(s.perPlayer.length, 1),
+            results: s.perPlayer,
+          });
       })
       .catch(() => {});
-  }, [view?.bucket, params.id]);
+  }, [view?.bucket, params.id, entryUsd]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -119,6 +129,9 @@ export default function LivePage() {
   }
 
   const live = view.bucket === "live";
+  // The bell has rung once the game ended or we're past endsAt (settling) — agent locks here.
+  const over = view.bucket === "ended" || (!!view.endsAt && now >= view.endsAt);
+  const canInstruct = live && !over;
   const myNav = playerId ? (navByPlayer[playerId] ?? entryUsd) : entryUsd;
   const myPnl = entryUsd > 0 ? ((myNav - entryUsd) / entryUsd) * 100 : 0;
 
@@ -142,7 +155,7 @@ export default function LivePage() {
 
   const send = async () => {
     const text = draft.trim();
-    if (!text || !playerId || sending) return;
+    if (!text || !playerId || sending || !canInstruct) return;
     setDraft("");
     setMessages((m) => [...m, { role: "you", text }]);
     setSending(true);
@@ -155,13 +168,14 @@ export default function LivePage() {
     }
   };
 
-  if (ended) {
-    const winner = players.find((p) => p.id === ended.winnerPlayerId) ?? null;
+  if (settled) {
     return (
-      <VictoryRoyale
-        winnerName={winner?.displayName ?? "No one"}
-        youWon={!!ended.winnerPlayerId && ended.winnerPlayerId === playerId}
-        pot={ended.potUsd}
+      <ResultsScreen
+        winnerPlayerId={settled.winnerPlayerId}
+        results={settled.results}
+        myPlayerId={playerId}
+        pot={settled.potUsd}
+        nameById={nameById}
         onExit={() => {
           reset();
           router.replace("/dashboard");
@@ -176,8 +190,10 @@ export default function LivePage() {
         <div>
           <h1 className="font-display text-[18px] font-bold uppercase leading-none tracking-tight">{view.name}</h1>
           <p className="flex items-center gap-1.5 text-[12px] text-muted">
-            <Radio className="h-3.5 w-3.5" style={{ color: live ? "var(--color-loss)" : "var(--color-muted)" }} />
-            {live ? (
+            <Radio className="h-3.5 w-3.5" style={{ color: live && !over ? "var(--color-loss)" : "var(--color-muted)" }} />
+            {over ? (
+              "Match over · settling results…"
+            ) : live ? (
               <>
                 LIVE · ends in{" "}
                 <span className="font-mono text-fg">{view.endsAt ? formatDelta(view.endsAt - now) : "—"}</span>
@@ -255,9 +271,9 @@ export default function LivePage() {
             <span className="ml-auto flex items-center gap-1 text-[11px] text-muted">
               <span
                 className="inline-block h-1.5 w-1.5 rounded-full"
-                style={{ background: connected ? "var(--color-profit)" : "var(--color-muted)" }}
+                style={{ background: over ? "var(--color-muted)" : connected ? "var(--color-profit)" : "var(--color-muted)" }}
               />
-              {live ? "trading" : connected ? "connected" : "offline"}
+              {over ? "locked" : live ? "trading" : connected ? "connected" : "offline"}
             </span>
           </div>
           <div ref={scrollRef} className="flex-1 space-y-2 overflow-y-auto px-3 py-3 no-scrollbar">
@@ -284,22 +300,29 @@ export default function LivePage() {
               </div>
             ))}
           </div>
-          <div className="flex items-center gap-2 border-t border-[color:var(--color-line)] p-2.5">
-            <input
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && send()}
-              placeholder="Tell your agent what to do…"
-              className="flex-1 bg-transparent px-2 text-[14px] text-fg outline-none placeholder:text-dim"
-            />
-            <button
-              onClick={send}
-              disabled={sending}
-              className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[color:var(--color-lime)] text-black transition active:scale-95 disabled:opacity-50"
-            >
-              <Send className="h-4 w-4" />
-            </button>
-          </div>
+          {over ? (
+            <div className="border-t border-[color:var(--color-line)] p-3 text-center text-[12px] text-dim">
+              🔒 The bell rang — your agent is locked. Settling the final results…
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 border-t border-[color:var(--color-line)] p-2.5">
+              <input
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && send()}
+                disabled={!canInstruct}
+                placeholder={live ? "Tell your agent what to do…" : "Your agent goes live at the bell…"}
+                className="flex-1 bg-transparent px-2 text-[14px] text-fg outline-none placeholder:text-dim disabled:opacity-60"
+              />
+              <button
+                onClick={send}
+                disabled={sending || !canInstruct}
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[color:var(--color-lime)] text-black transition active:scale-95 disabled:opacity-50"
+              >
+                <Send className="h-4 w-4" />
+              </button>
+            </div>
+          )}
         </div>
 
         <p className="pb-3 text-center text-[11px] text-dim">
@@ -310,19 +333,29 @@ export default function LivePage() {
   );
 }
 
-function VictoryRoyale({
-  winnerName,
-  youWon,
+function ResultsScreen({
+  winnerPlayerId,
+  results,
+  myPlayerId,
   pot,
+  nameById,
   onExit,
 }: {
-  winnerName: string;
-  youWon: boolean;
+  winnerPlayerId: string | null;
+  results: PlayerResult[];
+  myPlayerId: string | null;
   pot: number;
+  nameById: Record<string, string>;
   onExit: () => void;
 }) {
+  const youWon = !!winnerPlayerId && winnerPlayerId === myPlayerId;
+  const winnerName =
+    (winnerPlayerId && (nameById[winnerPlayerId] || results.find((r) => r.playerId === winnerPlayerId)?.displayName)) ||
+    "No one";
+  const ranked = [...results].sort((a, b) => a.rank - b.rank);
+
   return (
-    <div className="relative flex h-dvh flex-col items-center justify-center overflow-hidden px-6 text-center">
+    <div className="relative flex h-dvh flex-col items-center overflow-y-auto px-6 py-10 text-center no-scrollbar">
       {Array.from({ length: 18 }).map((_, i) => (
         <motion.span
           key={i}
@@ -337,27 +370,64 @@ function VictoryRoyale({
         initial={{ scale: 0.8, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         transition={{ type: "spring", stiffness: 260, damping: 18 }}
-        className="relative z-10 flex flex-col items-center gap-4"
+        className="relative z-10 flex flex-col items-center gap-3"
       >
         <span className="grid h-16 w-16 place-items-center rounded-full bg-[color:var(--color-lime)] text-black">
           <Trophy className="h-8 w-8" />
         </span>
         <p className="font-mono text-[12px] uppercase tracking-[0.3em] text-[color:var(--color-lime)]">Victory Royale</p>
-        <h1 className="font-display text-[34px] font-bold uppercase leading-none tracking-tight">
+        <h1 className="font-display text-[30px] font-bold uppercase leading-none tracking-tight">
           {youWon ? "You took the pot!" : `${winnerName} wins`}
         </h1>
-        <Avatar name={youWon ? "You" : winnerName} size={64} />
         <p className="font-display text-[40px] font-bold text-[color:var(--color-lime)] tnum">{usd(pot)}</p>
         <p className="text-[13px] text-muted">
           {youWon ? "Pot settled to your wallet." : "Better luck next Match — don't get Rekt."}
         </p>
-        <button
-          onClick={onExit}
-          className="mt-2 h-12 rounded-pill bg-[color:var(--color-lime)] px-8 font-semibold text-black transition active:scale-95"
-        >
-          Back to The Lobby
-        </button>
       </motion.div>
+
+      {/* final standings */}
+      <div className="relative z-10 mt-6 w-full max-w-md space-y-2">
+        {ranked.length === 0 && <p className="text-[13px] text-dim">Final results are being settled…</p>}
+        {ranked.map((r) => {
+          const you = r.playerId === myPlayerId;
+          const finalUsd = baseUnitsToNumber(r.finalUsdc);
+          const pnlUsd = baseUnitsToNumber(r.pnl);
+          return (
+            <div
+              key={r.playerId}
+              className={`flex items-center gap-3 rounded-card border px-4 py-3 text-left ${
+                you
+                  ? "border-[color:var(--color-lime)]/60 bg-[color:var(--color-lime)]/10"
+                  : "border-[color:var(--color-line)] bg-[color:var(--color-surface)]"
+              }`}
+            >
+              <span className="w-5 text-center font-mono text-[13px] font-bold text-muted">{r.rank}</span>
+              <Avatar name={you ? "You" : r.displayName} size={30} />
+              <span className="min-w-0 flex-1 truncate text-[14px] font-semibold text-fg">
+                {you ? "You" : r.displayName}
+                {r.playerId === winnerPlayerId && " 👑"}
+              </span>
+              <div className="text-right">
+                <p className="font-display text-[15px] font-bold tnum">{usd(finalUsd)}</p>
+                <p
+                  className="font-mono text-[11px]"
+                  style={{ color: pnlUsd >= 0 ? "var(--color-profit)" : "var(--color-loss)" }}
+                >
+                  {pnlUsd >= 0 ? "+" : "−"}
+                  {usd(Math.abs(pnlUsd))}
+                </p>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <button
+        onClick={onExit}
+        className="relative z-10 mt-6 h-12 shrink-0 rounded-pill bg-[color:var(--color-lime)] px-8 font-semibold text-black transition active:scale-95"
+      >
+        Back to The Lobby
+      </button>
     </div>
   );
 }
