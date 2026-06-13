@@ -8,6 +8,10 @@ type Hash = `0x${string}`;
 
 const RECEIPT_TIMEOUT_MS = 120_000;
 
+// 0x + 64 hex chars. Guards waitForReceipt against an empty/malformed hash that would otherwise
+// make viem wait the full receipt timeout before failing (the empty-Privy-hash hang).
+const TX_HASH_PATTERN = /^0x[0-9a-fA-F]{64}$/;
+
 // Thin wrapper over a viem public client for Base. Used for erc20 reads (balance/allowance,
 // multicall) and confirming Privy-broadcast transactions.
 export class ViemReader {
@@ -94,6 +98,9 @@ export class ViemReader {
   }
 
   async waitForReceipt(hash: string): Promise<void> {
+    if (!TX_HASH_PATTERN.test(hash)) {
+      throw new Error(`waitForReceipt called with an invalid transaction hash: "${hash}"`);
+    }
     await this.getClient().waitForTransactionReceipt({ hash: hash as Hash, timeout: RECEIPT_TIMEOUT_MS });
   }
 }

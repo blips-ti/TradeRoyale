@@ -29,6 +29,33 @@ export interface PrivyTypedData {
 
 export class MissingPrivyCredentialsError extends Error {}
 
+// Privy transaction-status values (mirrors @privy-io/node Transaction.status). A broadcasted
+// hash is enough to hand off to the on-chain receipt wait; the failure set must NEVER resolve
+// to an empty hash.
+const BROADCASTED_STATUSES = ['broadcasted', 'confirmed', 'finalized'] as const;
+const FAILED_STATUSES = ['failed', 'execution_reverted', 'provider_error', 'replaced'] as const;
+
+// Sponsored sends return an empty hash + a transaction_id; we poll Privy for the real hash.
+// Bounded so a stuck tx can never hang a caller indefinitely (the old empty-hash bug).
+const POLL_INTERVAL_MS = 1_500;
+const POLL_MAX_INTERVAL_MS = 6_000;
+const POLL_TIMEOUT_MS = 90_000;
+
+type PrivyTxStatus =
+  | 'broadcasted'
+  | 'confirmed'
+  | 'execution_reverted'
+  | 'failed'
+  | 'replaced'
+  | 'finalized'
+  | 'provider_error'
+  | 'pending';
+
+interface PrivyTransactionStatus {
+  status: PrivyTxStatus;
+  transaction_hash: string | null;
+}
+
 // A player joins from their own EVM wallet (linked to their Privy DID) — that's where the
 // shielded payout is finally routed. The embedded Privy wallet is the server trading wallet,
 // NOT the depositor, so it is explicitly excluded when resolving this address.
@@ -76,6 +103,8 @@ export class PrivyService {
 
   // Privy requires transaction.value as a 0x-hex string. Callers pass mixed forms (decimal "0"
   // for approve/transfer, LI.FI's 0x-hex for native swaps); toHexValue canonicalizes them.
+  // Sponsored sends (EIP-7702/paymaster) broadcast asynchronously: Privy returns an EMPTY hash
+  // plus a transaction_id, so we poll for the real hash and NEVER hand a caller an empty string.
   async sendTransaction(
     walletId: string,
     request: PrivyTransactionRequest,
@@ -97,11 +126,49 @@ export class PrivyService {
             },
           },
         });
-      return result.hash;
+      if (result.hash) return result.hash;
+      if (result.transaction_id) return await this.resolveSponsoredHash(walletId, result.transaction_id);
+      throw new Error('Privy sendTransaction returned no hash and no transaction_id');
     } catch (error) {
       logger.warn({ walletId, err: error }, '[privy] sendTransaction failed');
       throw error;
     }
+  }
+
+  // Polls Privy's transaction-status API (direct get-by-id) for a sponsored tx until it has a
+  // broadcasted hash, fails, or the bounded timeout elapses. Always returns a real hash or throws.
+  private async resolveSponsoredHash(walletId: string, transactionId: string): Promise<string> {
+    const deadline = Date.now() + POLL_TIMEOUT_MS;
+    let interval = POLL_INTERVAL_MS;
+    while (Date.now() < deadline) {
+      const tx = await this.getTransactionStatus(transactionId);
+      if (this.isFailedStatus(tx.status)) {
+        throw new Error(`Privy sponsored tx ${transactionId} ${tx.status} (wallet ${walletId})`);
+      }
+      if (this.isBroadcastedStatus(tx.status) && tx.transaction_hash) return tx.transaction_hash;
+      await this.sleep(Math.min(interval, deadline - Date.now()));
+      interval = Math.min(interval * 2, POLL_MAX_INTERVAL_MS);
+    }
+    throw new Error(`Privy sponsored tx ${transactionId} not confirmed in time`);
+  }
+
+  // Direct get-by-id on the top-level transactions resource — cleaner than the per-wallet list
+  // scan (no chain mapping, no token/asset filter required).
+  private async getTransactionStatus(transactionId: string): Promise<PrivyTransactionStatus> {
+    const tx = await this.getClient().transactions().get(transactionId);
+    return { status: tx.status, transaction_hash: tx.transaction_hash };
+  }
+
+  private isBroadcastedStatus(status: PrivyTxStatus): boolean {
+    return (BROADCASTED_STATUSES as readonly string[]).includes(status);
+  }
+
+  private isFailedStatus(status: PrivyTxStatus): boolean {
+    return (FAILED_STATUSES as readonly string[]).includes(status);
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   // Signs EIP-712 typed data with a player's server wallet (TEE-backed). Used by the Unlink
