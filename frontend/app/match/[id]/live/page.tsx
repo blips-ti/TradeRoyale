@@ -120,10 +120,17 @@ export default function LivePage() {
           const done = streamRef.current.trim();
           streamRef.current = "";
           setStreamText("");
+          let toolLine = "";
+          if (kind === "tool") {
+            toolLine = toolLabel(String(e.data.tool ?? ""));
+            if (e.data.fromToken && e.data.toToken) {
+              toolLine += ` · ${tokenMeta(String(e.data.fromToken)).symbol} → ${tokenMeta(String(e.data.toToken)).symbol}`;
+            }
+          }
           setMessages((m) => [
             ...m,
             ...(done ? [{ role: "agent" as const, text: done }] : []),
-            ...(kind === "tool" ? [{ role: "system" as const, text: toolLabel(String(e.data.tool ?? "")) }] : []),
+            ...(toolLine ? [{ role: "system" as const, text: toolLine }] : []),
           ]);
         }
       }

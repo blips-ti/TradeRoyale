@@ -114,7 +114,14 @@ export class TradingAgent {
       stream.on('thinking', (delta) => this.streamDelta(game.id, player.id, delta));
       stream.on('contentBlock', (block) => {
         if (block.type === 'tool_use') {
-          this.hub.broadcastToPlayer('agent_log', game.id, player.id, { kind: 'tool', tool: block.name });
+          // Surface the token pair (when the tool has one) so the arena shows what it's doing.
+          const input = (block.input ?? {}) as Record<string, unknown>;
+          this.hub.broadcastToPlayer('agent_log', game.id, player.id, {
+            kind: 'tool',
+            tool: block.name,
+            fromToken: typeof input.fromToken === 'string' ? input.fromToken : undefined,
+            toToken: typeof input.toToken === 'string' ? input.toToken : undefined,
+          });
         }
       });
       finalMessage = await stream.finalMessage();
