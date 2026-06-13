@@ -7,8 +7,7 @@ import { ArrowRight, Menu, Wallet, Zap } from "lucide-react";
 import { useAuth } from "@/app/_lib/auth";
 import { useGame } from "@/app/_lib/store";
 import { useSessionSync } from "@/app/_lib/useSessionSync";
-import { getMatchBase, resolveMatch } from "@/app/_lib/matches";
-import { formatDelta, useNow } from "@/app/_lib/useNow";
+import { useMatchView } from "@/app/_lib/useMatchView";
 import { Logo } from "./Logo";
 import { MenuSheet } from "./MenuSheet";
 import { TabBar } from "./TabBar";
@@ -18,14 +17,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { ready, authenticated, user, login } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
-  const { init, anchorAt, joinedMatchId } = useGame();
-  const now = useNow(1000);
+  const { init, joinedMatchId } = useGame();
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
   // Reconcile the user's active game/player with the backend (source of truth) on
   // (re)connect or wallet switch — clears stale local state when there's no active game.
   useSessionSync(user?.id ?? null);
+
+  // The real backend game the user is in — drives the banner + live-lock (no mock timing).
+  const { view } = useMatchView(authenticated && joinedMatchId ? joinedMatchId : null);
 
   useEffect(() => {
     init();
@@ -39,13 +40,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, []);
 
   // Live-lock: once your match is live, you can only be on its live screen.
-  const base = authenticated && joinedMatchId ? getMatchBase(joinedMatchId) : null;
-  const match = base && anchorAt && now ? resolveMatch(base, anchorAt, now) : null;
   useEffect(() => {
-    if (match && match.status === "live" && pathname !== `/match/${match.id}/live`) {
-      router.replace(`/match/${match.id}/live`);
+    if (view && view.bucket === "live" && pathname !== `/match/${view.id}/live`) {
+      router.replace(`/match/${view.id}/live`);
     }
-  }, [match, pathname, router]);
+  }, [view, pathname, router]);
 
   if (!ready) {
     return (
@@ -55,7 +54,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     );
   }
 
-  const showBanner = match && match.status === "upcoming";
+  const showBanner = view && view.bucket === "ongoing";
 
   return (
     <>
@@ -88,9 +87,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </header>
 
-      {showBanner && match && (
+      {showBanner && view && (
         <Link
-          href={`/match/${match.id}/setup`}
+          href={`/match/${view.id}`}
           className="mx-5 mb-3 flex items-center gap-3 rounded-card border border-[color:var(--color-lime)]/40 bg-[color:var(--color-lime)]/10 px-4 py-3 transition active:scale-[0.99]"
         >
           <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[color:var(--color-lime)] text-black">
@@ -98,10 +97,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </span>
           <div className="min-w-0 flex-1 leading-tight">
             <p className="truncate text-[13px] font-semibold text-fg">
-              You&apos;re in {match.name} · setup your agent
+              You&apos;re in {view.name}
             </p>
             <p className="font-mono text-[12px] text-[color:var(--color-lime)]">
-              Starts in {formatDelta(match.startsAt - now)}
+              Tap to continue →
             </p>
           </div>
           <ArrowRight className="h-4 w-4 text-[color:var(--color-lime)]" />

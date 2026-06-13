@@ -7,7 +7,7 @@ import { useState } from "react";
 import { useAuth } from "@/app/_lib/auth";
 import { useGame } from "@/app/_lib/store";
 import { useAchievements } from "@/app/_lib/achievementsStore";
-import { getMatchBase, resolveMatch } from "@/app/_lib/matches";
+import { useMatchView } from "@/app/_lib/useMatchView";
 import { ACHIEVEMENTS, progressFor, XP_PER_LEVEL } from "@/app/_lib/achievements";
 import { shortAddress } from "@/app/_lib/format";
 import { formatDelta, useNow } from "@/app/_lib/useNow";
@@ -26,7 +26,7 @@ export default function ProfilePage() {
 
 function Profile() {
   const { user, logout, login } = useAuth();
-  const { anchorAt, joinedMatchId, agent } = useGame();
+  const { joinedMatchId, agent } = useGame();
   const now = useNow(1000);
   const router = useRouter();
   const [copied, setCopied] = useState(false);
@@ -51,8 +51,7 @@ function Profile() {
     );
   }
 
-  const base = joinedMatchId ? getMatchBase(joinedMatchId) : null;
-  const match = base && anchorAt && now ? resolveMatch(base, anchorAt, now) : null;
+  const { view: match } = useMatchView(joinedMatchId);
 
   const copy = () => {
     if (!user.address) return;
@@ -121,7 +120,7 @@ function Profile() {
       {/* current match */}
       <Reveal delay={0.09}>
         {match ? (
-          <Link href={`/match/${match.id}/${match.status === "live" ? "live" : "setup"}`}>
+          <Link href={`/match/${match.id}${match.bucket === "live" ? "/live" : ""}`}>
             <Card className="flex items-center gap-3 p-4 transition active:scale-[0.99]">
               <span className="grid h-10 w-10 place-items-center rounded-full bg-[color:var(--color-lime)] text-black">
                 <Swords className="h-4 w-4" />
@@ -130,12 +129,12 @@ function Profile() {
                 <p className="text-[11px] uppercase tracking-[0.14em] text-muted">Your Match</p>
                 <p className="truncate text-[15px] font-bold text-fg">{match.name}</p>
                 <p className="font-mono text-[12px] text-[color:var(--color-lime)]">
-                  {match.status === "upcoming"
-                    ? `Starts in ${formatDelta(match.startsAt - now)}`
-                    : match.status === "live"
-                      ? `Live · ends in ${formatDelta(match.endsAt - now)}`
+                  {match.bucket === "ongoing"
+                    ? "In lobby"
+                    : match.bucket === "live"
+                      ? `Live · ends in ${match.endsAt ? formatDelta(match.endsAt - now) : "—"}`
                       : "Ended"}
-                  {agent ? ` · ${agent.name}` : " · agent not set"}
+                  {agent ? ` · ${agent.name}` : ""}
                 </p>
               </div>
               <ArrowRight className="h-4 w-4 text-muted" />

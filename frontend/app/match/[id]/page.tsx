@@ -27,7 +27,7 @@ function MatchDetail() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const { authenticated, user, login } = useAuth();
-  const { joinedMatchId, setSession, setAgent } = useGame();
+  const { joinedMatchId, setSession } = useGame();
   const now = useNow(1000);
 
   const [game, setGame] = useState<Game | null>(null);
@@ -89,9 +89,10 @@ function MatchDetail() {
   const spotsLeft = Math.max(game.maxPlayers - players.length, 0);
   const endsAtMs = game.endsAt ? Date.parse(game.endsAt) : 0;
 
-  const onJoined = (res: JoinResult, agentName: string) => {
+  // Joining only establishes the BE session. The agent is configured later (post-deposit),
+  // and only a real strategy save sets the local agent — so "join" never fakes an agent.
+  const onJoined = (res: JoinResult) => {
     setSession(game.id, res.playerId);
-    setAgent({ name: agentName, risk: "balanced", prompt: "" });
   };
 
   return (
