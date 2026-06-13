@@ -34,7 +34,7 @@ export function createApp(): AppBundle {
     '*',
     cors({
       origin: corsOrigin,
-      allowHeaders: ['Content-Type', 'x-player-id'],
+      allowHeaders: ['Content-Type', 'Authorization', 'x-player-id'],
       allowMethods: ['GET', 'POST', 'PUT', 'OPTIONS'],
     }),
   );

@@ -29,8 +29,12 @@ const booleanFlag = z
 
 const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
-  // Comma-separated browser-origin allowlist for CORS, or '*' for any (dev default).
-  CORS_ORIGINS: z.string().min(1).default('*'),
+  // Comma-separated browser-origin allowlist for CORS, or '*' for any. Defaults to the
+  // local FE (3000/3001) + the Vercel deployment; override per-environment as needed.
+  CORS_ORIGINS: z
+    .string()
+    .min(1)
+    .default('http://localhost:3000,http://localhost:3001,https://trade-royale-project.vercel.app'),
   REDIS_URL: z.string().min(1, 'REDIS_URL is required'),
   UNLINK_API_KEY: z.string().min(1, 'UNLINK_API_KEY is required'),
   // The default is still the TESTNET value: Unlink's published supported-chains list only
