@@ -322,6 +322,11 @@ export default function LivePage() {
     }
   };
 
+  const exitToLobby = () => {
+    reset();
+    router.replace("/dashboard");
+  };
+
   if (settled) {
     return (
       <ResultsScreen
@@ -330,10 +335,22 @@ export default function LivePage() {
         myPlayerId={playerId}
         pot={settled.potUsd}
         nameById={nameById}
-        onExit={() => {
-          reset();
-          router.replace("/dashboard");
-        }}
+        onExit={exitToLobby}
+      />
+    );
+  }
+
+  // Definitively ended but no settlement record (e.g. a settle that failed) — don't trap the user
+  // on the settling countdown forever; show the results screen's empty state so they can exit.
+  if (view.bucket === "ended") {
+    return (
+      <ResultsScreen
+        winnerPlayerId={null}
+        results={[]}
+        myPlayerId={playerId}
+        pot={entryUsd * Math.max(players.length, 1)}
+        nameById={nameById}
+        onExit={exitToLobby}
       />
     );
   }
