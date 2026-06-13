@@ -16,6 +16,8 @@ export type GameEventType =
   | 'player_liquidated'
   // Winner-take-all payout completed: every loser's USDC consolidated into the winner's wallet.
   | 'prize_paid'
+  // Winner's consolidated pot routed through Unlink to their own funding wallet (final, shielded).
+  | 'prize_settled'
   // Per-tick NAV (USD) of a player's trading wallet — drives the live arena chart + standings.
   | 'portfolio_update';
 

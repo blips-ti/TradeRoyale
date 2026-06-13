@@ -18,6 +18,7 @@ import { env } from "../env.js";
 import { decryptSecret, encryptSecret } from "../lib/crypto.js";
 import { logger } from "../logger.js";
 import { privyService, PrivyService } from "./privyService.js";
+import { viemReader, ViemReader } from "./viemClient.js";
 
 // Derived from the client surface so it tracks canary drift without a separate import
 // (the SDK does not re-export TransactionListData from its public entry points).
@@ -65,22 +66,34 @@ export interface DepositFromPrivyRequest {
   amount: string;
 }
 
-// Builds an Unlink EvmProvider backed by a Privy server wallet. sendTransaction routes to
-// Privy (sponsored); signTypedData is the canary-verification stub the payout depends on.
-function buildPrivyEvmProvider(walletId: string, address: string, privy: PrivyService): EvmProvider {
+interface PrivyEvmProviderDeps {
+  walletId: string;
+  address: string;
+  privy: PrivyService;
+  viem: ViemReader;
+}
+
+// Builds an Unlink EvmProvider backed by a Privy server wallet: sponsored sendTransaction (the
+// Permit2 approve), TEE signTypedData (the Permit2 witness), and a viem-backed allowance read.
+function buildPrivyEvmProvider(deps: PrivyEvmProviderDeps): EvmProvider {
   return evm.fromSigner({
-    address,
+    address: deps.address,
     sendTransaction: (tx) =>
-      privy.sendTransaction(
-        walletId,
+      deps.privy.sendTransaction(
+        deps.walletId,
         { to: tx.to, data: tx.data, value: tx.value ? tx.value.toString() : "0" },
         { sponsor: true },
       ),
-    // STUB: must sign Unlink's Permit2 typed data via Privy's signTypedData — verify the exact
-    // typed-data shape against the canary SDK before enabling payout (currently never reached).
-    signTypedData: () => {
-      throw new Error("Privy Permit2 signTypedData bridge not implemented (payout disabled in v1)");
-    },
+    // The SDK's typed data carries the EIP-712 payload under `value`; Privy/eth_signTypedData_v4
+    // expect it under `message`, so remap that single field. domain/types/primaryType pass through.
+    signTypedData: (typedData) =>
+      deps.privy.signTypedData(deps.walletId, {
+        domain: typedData.domain,
+        types: typedData.types,
+        primaryType: typedData.primaryType,
+        message: typedData.value,
+      }),
+    getErc20Allowance: async (params) => deps.viem.getErc20Allowance(params.token, params.owner, params.spender),
   });
 }
 
@@ -90,7 +103,10 @@ export class UnlinkService {
   private admin: UnlinkAdmin | undefined;
   private readonly clients = new Map<string, UnlinkClient>();
 
-  constructor(private readonly privy: PrivyService = privyService) {}
+  constructor(
+    private readonly privy: PrivyService = privyService,
+    private readonly viem: ViemReader = viemReader,
+  ) {}
 
   static getInstance(): UnlinkService {
     if (!UnlinkService.instance) {
@@ -181,17 +197,22 @@ export class UnlinkService {
     await handle.wait();
   }
 
-  // Deposit funds from a player's Privy wallet back into Unlink. VERIFIED against the canary
-  // .d.ts: client.depositWithApproval accepts an external `evm` provider (built via
-  // evm.fromSigner) — so the Privy wallet is the signer. STUB REMAINING: EvmProvider.signTypedData
-  // must sign Unlink's exact Permit2 typed-data shape via Privy's signTypedData; that bridge needs
-  // canary verification before enabling. No longer used by settlement (winner-take-all is public).
+  // Deposits funds from a player's Privy wallet into Unlink (Phase-3 winner shielding). The SDK
+  // runs an on-chain ERC-20 approve to Permit2 (sponsored Privy tx), then the relayer pulls the
+  // funds via Permit2 PermitWitnessTransferFrom — which requires the Privy wallet's EIP-712
+  // signature over the witness typed data. depositWithApproval needs getErc20Allowance, so the
+  // provider supplies a viem-backed reader; it sequences approve→sign→deposit internally.
   async depositFromPrivyWallet(request: DepositFromPrivyRequest): Promise<void> {
     const client = this.getOrBuildClient(request.unlinkAddress, {
       unlinkAddress: request.unlinkAddress,
       encMnemonic: request.encMnemonic,
     });
-    const evm = buildPrivyEvmProvider(request.privyWalletId, request.privyWalletAddress, this.privy);
+    const evm = buildPrivyEvmProvider({
+      walletId: request.privyWalletId,
+      address: request.privyWalletAddress,
+      privy: this.privy,
+      viem: this.viem,
+    });
     const handle = await client.depositWithApproval({ token: request.token, amount: request.amount, evm });
     await handle.wait();
   }

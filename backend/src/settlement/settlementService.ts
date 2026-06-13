@@ -1,12 +1,21 @@
 import { BigNumber } from "bignumber.js";
 import { encodeFunctionData, erc20Abi } from "viem";
 
-import type { PayoutStatus, PayoutTransfer, Player, PlayerResult, Settlement } from "../domain/types.js";
+import type {
+  PayoutStatus,
+  PayoutTransfer,
+  Player,
+  PlayerResult,
+  Settlement,
+  ShieldPhase,
+  ShieldResult,
+} from "../domain/types.js";
 import { env } from "../env.js";
 import { logger } from "../logger.js";
 import { PlayerRepository } from "../repositories/playerRepository.js";
 import { SettlementRepository } from "../repositories/settlementRepository.js";
 import { privyService, PrivyService } from "../services/privyService.js";
+import { unlinkService, UnlinkService } from "../services/unlinkService.js";
 import { viemReader, ViemReader } from "../services/viemClient.js";
 import { gameEventHub, GameEventHub } from "../ws/gameEventHub.js";
 
@@ -17,6 +26,7 @@ export interface PayoutResult {
   winnerAddress: string | null;
   prizePoolUsdc: string;
   transfers: PayoutTransfer[];
+  shield?: ShieldResult;
 }
 
 // Builds the ranked settlement record, then runs the winner-take-all payout: read every
@@ -29,6 +39,7 @@ export class SettlementService {
     private readonly viem: ViemReader = viemReader,
     private readonly privy: PrivyService = privyService,
     private readonly hub: GameEventHub = gameEventHub,
+    private readonly unlink: UnlinkService = unlinkService,
     private readonly entryToken: string = env.ENTRY_TOKEN_ADDRESS,
   ) {}
 
@@ -51,9 +62,10 @@ export class SettlementService {
     return settlement;
   }
 
-  // Winner-take-all USDC consolidation. Re-reads every player's USDC in ONE multicall (the
-  // authoritative winner determination — not the rank), then transfers each loser's FULL USDC
-  // balance into the winner's Privy wallet. Crash-safe per loser, no-op for a single player.
+  // Winner-take-all USDC consolidation, then the shielded route-out. Re-reads every player's USDC
+  // in ONE multicall (the authoritative winner determination — not the rank), transfers each
+  // loser's FULL USDC into the winner's Privy wallet, then routes the consolidated pot
+  // Privy → Unlink → the winner's own funding wallet. Crash-safe per loser and per shield phase.
   async executePayout(settlement: Settlement): Promise<PayoutResult> {
     const players = await this.loadPlayers(settlement);
     const addresses = players.map((player) => player.privyWalletAddress!).filter((address) => !!address);
@@ -64,7 +76,6 @@ export class SettlementService {
     const losers = players.filter((player) => player.id !== winner.id);
     const transfers = await this.transferAll(losers, winner.privyWalletAddress, balances);
     const payoutStatus = this.deriveStatus(transfers);
-    await this.settlements.save({ ...settlement, winnerPlayerId: winner.id, payoutStatus, payouts: transfers });
 
     this.hub.broadcast("prize_paid", settlement.gameId, {
       winnerPlayerId: winner.id,
@@ -72,12 +83,101 @@ export class SettlementService {
       prizePoolUsdc: settlement.prizePoolUsdc,
       transfers,
     });
+
+    // Consolidation already succeeded — the shield must never undo or block it. Its outcome is
+    // recorded on the same settlement record and is surfaced as a separate event.
+    const shield = await this.shieldWinnerPot(settlement.gameId, winner);
+    await this.settlements.save({
+      ...settlement,
+      winnerPlayerId: winner.id,
+      payoutStatus,
+      payouts: transfers,
+      shield,
+    });
+
     return {
       winnerPlayerId: winner.id,
       winnerAddress: winner.privyWalletAddress,
       prizePoolUsdc: settlement.prizePoolUsdc,
       transfers,
+      shield,
     };
+  }
+
+  // Routes the winner's consolidated pot out of the public Privy wallet into Unlink, then back
+  // out to the winner's OWN funding wallet — the Unlink hop is what shields the payout. Reads the
+  // live on-chain pot first (the consolidated total), records the exact phase reached, and
+  // broadcasts prize_settled. Never throws: funds stay safe in the Privy wallet or in Unlink.
+  private async shieldWinnerPot(gameId: string, winner: Player): Promise<ShieldResult> {
+    if (!winner.privyWalletId) {
+      logger.warn({ gameId, winnerPlayerId: winner.id }, "[settlement] winner has no Privy wallet; shield skipped");
+      return this.recordShield(gameId, winner, { amount: "0", phase: "consolidated" });
+    }
+    const amount = await this.viem.getErc20Balance(this.entryToken, winner.privyWalletAddress!);
+    if (new BigNumber(amount).lte(0)) {
+      return this.recordShield(gameId, winner, { amount, phase: "consolidated" });
+    }
+    const deposited = await this.depositToUnlink(gameId, winner, amount);
+    if (deposited.phase === "deposit_failed") return deposited;
+    return this.withdrawToDepositor(gameId, winner, amount);
+  }
+
+  private async depositToUnlink(gameId: string, winner: Player, amount: string): Promise<ShieldResult> {
+    try {
+      await this.unlink.depositFromPrivyWallet({
+        unlinkAddress: winner.unlinkAddress,
+        encMnemonic: winner.encMnemonic,
+        privyWalletId: winner.privyWalletId!,
+        privyWalletAddress: winner.privyWalletAddress!,
+        token: this.entryToken,
+        amount,
+      });
+      return this.recordShield(gameId, winner, { amount, phase: "deposited" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error({ gameId, winnerPlayerId: winner.id, err: message }, "[settlement] shield deposit failed");
+      return this.recordShield(gameId, winner, { amount, phase: "deposit_failed", error: message });
+    }
+  }
+
+  private async withdrawToDepositor(gameId: string, winner: Player, amount: string): Promise<ShieldResult> {
+    const destination = winner.ownerId ? await this.privy.resolveDepositorAddress(winner.ownerId) : null;
+    if (!destination) {
+      logger.warn({ gameId, winnerPlayerId: winner.id }, "[settlement] no depositor wallet; pot stays in Unlink");
+      return this.recordShield(gameId, winner, { amount, phase: "no_destination" });
+    }
+    try {
+      await this.unlink.withdrawToAddress({
+        playerId: winner.id,
+        unlinkAddress: winner.unlinkAddress,
+        encMnemonic: winner.encMnemonic,
+        recipientEvmAddress: destination,
+        token: this.entryToken,
+        amount,
+      });
+      return this.recordShield(gameId, winner, { amount, phase: "withdrawn", finalDestination: destination });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error({ gameId, winnerPlayerId: winner.id, err: message }, "[settlement] shield withdrawal failed");
+      return this.recordShield(gameId, winner, { amount, phase: "withdraw_failed", finalDestination: destination, error: message });
+    }
+  }
+
+  // Builds the ShieldResult and broadcasts prize_settled. Single place the phase + destination
+  // reach the wire so every outcome (success or a stuck phase) is observable to the arena.
+  private recordShield(
+    gameId: string,
+    winner: Player,
+    fields: { amount: string; phase: ShieldPhase; finalDestination?: string; error?: string },
+  ): ShieldResult {
+    const shield: ShieldResult = { winnerPlayerId: winner.id, ...fields };
+    this.hub.broadcast("prize_settled", gameId, {
+      winnerPlayerId: winner.id,
+      amount: shield.amount,
+      phase: shield.phase,
+      finalDestination: shield.finalDestination ?? null,
+    });
+    return shield;
   }
 
   private async loadPlayers(settlement: Settlement): Promise<Player[]> {

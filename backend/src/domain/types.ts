@@ -64,6 +64,28 @@ export interface PlayerResult {
 
 export type PayoutStatus = 'pending' | 'executed' | 'partial' | 'failed';
 
+// Phase the winner's shielded payout reached. Crash-safe ordering: funds are consolidated into
+// the winner's Privy wallet, deposited into Unlink, then withdrawn to the winner's own wallet.
+// A failure records the LAST phase reached so the operator knows exactly where the pot sits.
+export type ShieldPhase =
+  | 'consolidated' // pot is in the winner's Privy wallet (deposit not yet attempted)
+  | 'deposited' // pot is inside Unlink (withdrawal not yet attempted)
+  | 'withdrawn' // pot delivered to the winner's depositor wallet (terminal success)
+  | 'deposit_failed' // deposit threw; funds safe in the Privy wallet
+  | 'withdraw_failed' // withdrawal threw; funds safe inside Unlink
+  | 'no_destination'; // no resolvable depositor wallet; pot left in the Privy wallet
+
+// Audit record of routing the winner's pot through Unlink to their own funding wallet. amount is
+// the consolidated pot moved (base units). finalDestination is the resolved depositor wallet when
+// known; error carries the failure message for the phase that did not complete.
+export interface ShieldResult {
+  winnerPlayerId: string;
+  amount: string;
+  phase: ShieldPhase;
+  finalDestination?: string;
+  error?: string;
+}
+
 // One loser->winner USDC transfer in the winner-take-all consolidation. amount is the full
 // loser balance moved (base units); txHash is undefined when the send threw before broadcast.
 export interface PayoutTransfer {
@@ -84,6 +106,9 @@ export interface Settlement {
   payoutStatus: PayoutStatus;
   // Per-transfer audit trail of the winner-take-all consolidation; set by executePayout.
   payouts?: PayoutTransfer[];
+  // Audit of routing the winner's pot through Unlink to their own funding wallet; set by
+  // executePayout after consolidation. Absent when there is no winner.
+  shield?: ShieldResult;
 }
 
 // Whether a trade is a plain swap or an arbitrary same-chain protocol interaction (zap).
