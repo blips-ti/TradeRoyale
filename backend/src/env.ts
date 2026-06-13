@@ -9,8 +9,8 @@ const DEFAULT_TRADEABLE_TOKENS =
 const DEFAULT_AGENT_MODEL = 'claude-opus-4-8';
 // Continuous per-player loop pacing: floor between turns (cost backstop), default wait when the
 // agent doesn't call the wait tool, and an optional hard turn cap per player per game (0 = off).
-const DEFAULT_MIN_LOOP_INTERVAL_MS = 10_000;
-const DEFAULT_WAIT_SECONDS = 30;
+const DEFAULT_MIN_LOOP_INTERVAL_MS = 1_000;
+const DEFAULT_WAIT_SECONDS = 2;
 const DEFAULT_AGENT_MAX_TURNS_PER_GAME = 0;
 const DEFAULT_CHAIN_ID = 8453;
 // 'auto' = defer to LI.FI's liquidity-adaptive behavior (the new default for every quote): we

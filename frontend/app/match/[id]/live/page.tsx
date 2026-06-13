@@ -459,7 +459,7 @@ export default function LivePage() {
                     transition={{ duration: 1, repeat: Infinity, delay: i * 0.2 }}
                   />
                 ))}
-                <span className="ml-1">your agent is connecting…</span>
+                <span className="ml-1">thinking…</span>
               </div>
             )}
           </div>

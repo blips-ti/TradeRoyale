@@ -84,21 +84,22 @@ describe('AgentRunner continuous loops', () => {
     await runner.stopGame('g1');
   });
 
-  it('clamps a below-floor wait to MIN_LOOP_INTERVAL_MS between turns', async () => {
+  it('clamps a below-floor wait up to MIN_LOOP_INTERVAL_MS between turns', async () => {
     const g = game(3600);
-    // Agent always asks to wait 0s; the floor (10s) must apply between turns.
+    const FLOOR_MS = 1_000; // floor below the max-wait ceiling so the floor is what applies
+    // Agent always asks to wait 0s; the floor must apply between turns.
     const deps = buildDeps({ game: g, players: [player('p1')], runTick: async () => tickResult('p1', 0) });
-    const runner = new AgentRunner(deps.games, deps.players, deps.agent, MIN_LOOP_INTERVAL_MS, DEFAULT_WAIT_SECONDS, 0);
+    const runner = new AgentRunner(deps.games, deps.players, deps.agent, FLOOR_MS, DEFAULT_WAIT_SECONDS, 0);
 
     await runner.start('g1');
     await vi.advanceTimersByTimeAsync(0); // let the first turn run
     const afterFirst = (deps.agent.runTick as ReturnType<typeof vi.fn>).mock.calls.length;
     expect(afterFirst).toBe(1);
-    // 9s < floor: no second turn yet.
-    await vi.advanceTimersByTimeAsync(9_000);
+    // 0.5s < 1s floor: no second turn yet.
+    await vi.advanceTimersByTimeAsync(500);
     expect((deps.agent.runTick as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
-    // Crossing the 10s floor triggers the next turn.
-    await vi.advanceTimersByTimeAsync(2_000);
+    // Crossing the 1s floor triggers the next turn.
+    await vi.advanceTimersByTimeAsync(600);
     expect((deps.agent.runTick as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2);
     await runner.stopGame('g1');
   });

@@ -115,6 +115,10 @@ interface LifiTokensResponse {
 // server-side and executes LI.FI's own transactionRequest; the agent only expresses intent.
 export class LifiService {
   private static instance: LifiService;
+  // The seed-token list barely changes; cache it briefly so the agent's per-turn prompt build
+  // doesn't hit LI.FI every tick (keeps turns snappy).
+  private tokensCache?: { at: number; tokens: TradeableToken[] };
+  private static readonly TOKENS_TTL_MS = 30_000;
 
   constructor(
     private readonly chainId: number = env.CHAIN_ID,
@@ -181,6 +185,8 @@ export class LifiService {
   // Seed token metadata for the Base chain — display/portfolio-seed only, NOT a trade
   // whitelist (the agent may trade any token LI.FI can quote on Base).
   async getTokens(): Promise<TradeableToken[]> {
+    const cached = this.tokensCache;
+    if (cached && Date.now() - cached.at < LifiService.TOKENS_TTL_MS) return cached.tokens;
     const params = new URLSearchParams({ chains: String(this.chainId) });
     const body = await this.fetchJson<LifiTokensResponse>(`/tokens?${params.toString()}`);
     const chainTokens = body.tokens?.[String(this.chainId)] ?? [];
@@ -188,7 +194,9 @@ export class LifiService {
     const matched = chainTokens
       .filter((token) => token.address && wanted.has(token.address.toLowerCase()))
       .map((token) => this.toTradeableToken(token));
-    return matched.filter((token): token is TradeableToken => token !== null);
+    const tokens = matched.filter((token): token is TradeableToken => token !== null);
+    this.tokensCache = { at: Date.now(), tokens };
+    return tokens;
   }
 
   // USD prices keyed by lowercased address for a set of Base token addresses.

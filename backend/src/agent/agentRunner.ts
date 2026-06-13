@@ -9,6 +9,9 @@ import { tradingAgent, TradingAgent } from "./tradingAgent.js";
 const MS_PER_SEC = 1000;
 const FAILURE_BACKOFF_MS = 2_000;
 const MAX_CONSECUTIVE_FAILURES = 5;
+// Hard ceiling on the inter-turn wait so the agent stays continuously active (the LLM latency
+// already paces it) — even if it asks to wait longer, it acts again within a few seconds.
+const MAX_WAIT_SECONDS = 3;
 
 interface RunningLoop {
   controller: AbortController;
@@ -135,7 +138,8 @@ export class AgentRunner {
         continue;
       }
       const floorSeconds = this.minLoopIntervalMs / MS_PER_SEC;
-      const clamped = clampWaitSeconds(waitSeconds, floorSeconds, this.secondsRemaining(game));
+      const ceiling = Math.min(this.secondsRemaining(game), MAX_WAIT_SECONDS);
+      const clamped = clampWaitSeconds(waitSeconds, floorSeconds, ceiling);
       if (clamped <= 0) return;
       await this.interruptibleSleep(player.id, clamped * MS_PER_SEC, signal);
     }
