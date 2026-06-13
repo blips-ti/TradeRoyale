@@ -1,0 +1,22 @@
+# dependencies / build output (applies recursively, covers frontend/)
+node_modules/
+.next/
+out/
+build/
+dist/
+*.tsbuildinfo
+next-env.d.ts
+
+# env
+.env
+.env*.local
+
+# os / editor
+.DS_Store
+*.pem
+npm-debug.log*
+.vercel
+
+# verification / scratch artifacts
+.playwright-mcp/
+*.local.png
