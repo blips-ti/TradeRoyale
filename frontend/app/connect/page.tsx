@@ -2,8 +2,9 @@
 
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { ArrowRight, ShieldCheck, Zap } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { Logo } from "@/app/_components/Logo";
+import { BattlePreview } from "@/app/_components/BattlePreview";
 import { Button, Pill, Reveal } from "@/app/_components/ui";
 
 export default function ConnectPage() {
@@ -42,21 +43,8 @@ export default function ConnectPage() {
         </Reveal>
 
         <Reveal delay={0.2}>
-          <div className="mt-8 flex flex-col gap-2.5">
-            {[
-              { icon: Zap, text: "Your agent, your strategy — trades cross-chain via LI.FI" },
-              { icon: ShieldCheck, text: "Holdings shielded. Settled on-chain by Chainlink." },
-            ].map(({ icon: Icon, text }, i) => (
-              <div
-                key={i}
-                className="flex items-center gap-3 rounded-card border border-[color:var(--color-line)] bg-[color:var(--color-surface)] px-4 py-3.5"
-              >
-                <span className="grid h-9 w-9 place-items-center rounded-full bg-[color:var(--color-lime)]/12 text-[color:var(--color-lime)]">
-                  <Icon className="h-4 w-4" />
-                </span>
-                <span className="text-[13.5px] text-fg">{text}</span>
-              </div>
-            ))}
+          <div className="mt-8">
+            <BattlePreview />
           </div>
         </Reveal>
       </div>
