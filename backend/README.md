@@ -246,7 +246,7 @@ openssl rand -hex 32
 | `MAX_PRICE_IMPACT`         | no       | `0.5`                                        | auto-mode guard: LI.FI maxPriceImpact decimal (0.5 = 50%); ignored when `MAX_SLIPPAGE_BPS` is a number |
 | `OCTAV_API_KEY`            | no\*     | —                                            | Octav NAV API key (`data.octav.fi`), Bearer; lazy — only hit at settlement |
 | `OCTAV_API_URL`            | no       | `https://api.octav.fi/v1`                     | Octav public API base URL |
-| `LIQUIDATION_MIN_USDC`     | no       | `1000000`                                    | settlement dust floor (1 USDC); smaller positions are not liquidated |
+| `LIQUIDATION_MIN_USDC`     | no       | `0`                                          | settlement dust floor (base-unit USDC); default `0` liquidates every position (no dust skip) |
 
 Env is validated at boot with zod (`src/env.ts`). Missing or malformed values fail fast.
 `*` `ANTHROPIC_API_KEY`, `PRIVY_APP_ID`, `PRIVY_APP_SECRET`, and `OCTAV_API_KEY` are enforced

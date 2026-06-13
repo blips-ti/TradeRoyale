@@ -25,8 +25,8 @@ const DEFAULT_MAX_PRICE_IMPACT = 0.5;
 const DEFAULT_LIFI_MCP_URL = 'https://mcp.li.quest/mcp';
 const DEFAULT_BASE_RPC_URL = 'https://mainnet.base.org';
 const DEFAULT_OCTAV_API_URL = 'https://api.octav.fi/v1';
-// 1 USDC (6 decimals) — liquidation skips dust positions below this USDC-equivalent.
-const DEFAULT_LIQUIDATION_MIN_USDC = '1000000';
+// Default 0 — liquidation never skips small positions as dust unless explicitly configured.
+const DEFAULT_LIQUIDATION_MIN_USDC = '0';
 
 const evmAddress = z.string().regex(/^0x[0-9a-fA-F]{40}$/, 'must be a 20-byte hex address');
 // Accepts "true"/"false" (case-insensitive) from the env string; defaults to true.
@@ -113,7 +113,7 @@ export const envSchema = z.object({
   OCTAV_API_URL: z.string().url().default(DEFAULT_OCTAV_API_URL),
   // Delay after a game's deadline before the end-of-game Octav /wallet read + scoring. Lets the
   // chain + Octav indexer reflect the final wallet state (the FE shows a settling countdown).
-  SETTLE_OCTAV_DELAY_MS: z.coerce.number().int().min(0).default(60_000),
+  SETTLE_OCTAV_DELAY_MS: z.coerce.number().int().min(0).default(15_000),
   // Liquidation dust floor: positions worth less than this base-unit USDC value are skipped.
   LIQUIDATION_MIN_USDC: z
     .string()
