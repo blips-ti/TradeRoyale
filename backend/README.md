@@ -242,7 +242,8 @@ openssl rand -hex 32
 | `BASE_RPC_URL`             | no       | `https://mainnet.base.org`                   | public Base RPC for erc20/native reads + receipt waits |
 | `CHAIN_ID`                 | no       | `8453`                                       | the only chain trades run on (8453 = Base); cross-chain rejected |
 | `TRADEABLE_TOKENS`         | no       | Base USDC + WETH                             | display / portfolio-seed set — NOT a whitelist (agent may trade any LI.FI token on Base) |
-| `MAX_SLIPPAGE_BPS`         | no       | `100`                                        | max tolerated swap slippage in bps (100 = 1%) |
+| `MAX_SLIPPAGE_BPS`         | no       | `auto`                                       | `auto` (default) → LI.FI liquidity-adaptive slippage on every quote (no fixed-bps reject); a positive integer (≤ 10000) pins a fixed bps cap + hard reject |
+| `MAX_PRICE_IMPACT`         | no       | `0.5`                                        | auto-mode guard: LI.FI maxPriceImpact decimal (0.5 = 50%); ignored when `MAX_SLIPPAGE_BPS` is a number |
 | `OCTAV_API_KEY`            | no\*     | —                                            | Octav NAV API key (`data.octav.fi`), Bearer; lazy — only hit at settlement |
 | `OCTAV_API_URL`            | no       | `https://api.octav.fi/v1`                     | Octav public API base URL |
 | `LIQUIDATION_MIN_USDC`     | no       | `1000000`                                    | settlement dust floor (1 USDC); smaller positions are not liquidated |
@@ -294,7 +295,10 @@ server-side and executes **LI.FI's own `transactionRequest`** via Privy. The age
 **any token LI.FI can quote on Base** (no hard whitelist). Guards re-checked server-side on
 every `execute_swap`: game is live AND not yet ended (`secondsRemaining > 0` — trades are
 rejected only after the deadline, not before), `fromAmount <= actual wallet balance` (viem
-read; erc20 or native), slippage `<= MAX_SLIPPAGE_BPS`, same-chain (Base), the native-value
+read; erc20 or native), slippage policy per `MAX_SLIPPAGE_BPS` (default `auto` → LI.FI
+liquidity-adaptive slippage bounded by `MAX_PRICE_IMPACT` + the quote's `toAmountMin`, no
+fixed-bps reject; a number pins a fixed bps cap that hard-rejects exceeding quotes), same-chain
+(Base), the native-value
 rule (a non-zero tx value is allowed only when `fromToken` is the native sentinel and must
 equal the quote's value; ERC-20 sources require value 0), and the player owns the wallet.
 **Bridging / cross-chain is out of scope** and rejected. Ending in USDC is **not** the agent's
@@ -350,8 +354,10 @@ At `endsAt` the `GameClock` settles the game **server-side** (no agent / Anthrop
 `live → settling → ended`.
 
 1. **Liquidate to USDC.** For each player, every non-entry **touched token** on Base is
-   swapped back to the entry token (USDC) through the same `tradeExecutor` swap path (slippage
-   gate honored). Liquidation is crash-safe per player AND per token (`Promise.allSettled`) — one
+   swapped back to the entry token (USDC) through the same `tradeExecutor` swap path (same
+   `MAX_SLIPPAGE_BPS` policy — `auto` by default, so illiquid/long-tail tokens get a wider
+   buffer and can actually be sold). Liquidation is crash-safe per player AND per token
+   (`Promise.allSettled`) — one
    stuck swap never blocks the rest — and skips positions worth less than `LIQUIDATION_MIN_USDC`.
    Each player emits `player_liquidated { playerId, ok }`.
 2. **On-chain final score.** After all players liquidate, ONE `multicall` reads `balanceOf(USDC)`

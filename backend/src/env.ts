@@ -13,7 +13,15 @@ const DEFAULT_MIN_LOOP_INTERVAL_MS = 10_000;
 const DEFAULT_WAIT_SECONDS = 30;
 const DEFAULT_AGENT_MAX_TURNS_PER_GAME = 0;
 const DEFAULT_CHAIN_ID = 8453;
-const DEFAULT_MAX_SLIPPAGE_BPS = 100;
+// 'auto' = defer to LI.FI's liquidity-adaptive behavior (the new default for every quote): we
+// send a generous slippage buffer and bound risk with maxPriceImpact + toAmountMin instead of a
+// fixed bps cap. A positive integer (<= 10000 bps) pins the legacy fixed cap + hard reject.
+const DEFAULT_MAX_SLIPPAGE_BPS = 'auto';
+const MAX_BPS = 10_000;
+// LI.FI maxPriceImpact is a decimal fraction (0.5 = 50%); routes above it are hidden. LI.FI's own
+// default is 0.10, but settlement must sell long-tail/illiquid tokens back to USDC, so we widen the
+// ceiling — toAmountMin remains the real on-chain protection. Range 0..1.
+const DEFAULT_MAX_PRICE_IMPACT = 0.5;
 const DEFAULT_LIFI_MCP_URL = 'https://mcp.li.quest/mcp';
 const DEFAULT_BASE_RPC_URL = 'https://mainnet.base.org';
 const DEFAULT_OCTAV_API_URL = 'https://api.octav.fi/v1';
@@ -27,7 +35,9 @@ const booleanFlag = z
   .transform((value) => value.trim().toLowerCase() !== 'false')
   .pipe(z.boolean());
 
-const envSchema = z.object({
+// Exported only so MAX_SLIPPAGE_BPS parsing can be unit-tested in isolation (auto/AUTO/number)
+// without booting the full env, which requires real secrets.
+export const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
   // Comma-separated browser-origin allowlist for CORS, or '*' for any. Defaults to the
   // local FE (3000/3001) + the Vercel deployment; override per-environment as needed.
@@ -70,7 +80,24 @@ const envSchema = z.object({
     .default(DEFAULT_TRADEABLE_TOKENS)
     .transform((value) => value.split(',').map((token) => token.trim().toLowerCase()))
     .pipe(z.array(evmAddress).min(1, 'TRADEABLE_TOKENS must list at least one address')),
-  MAX_SLIPPAGE_BPS: z.coerce.number().int().positive().max(10_000).default(DEFAULT_MAX_SLIPPAGE_BPS),
+  // Accepts the literal 'auto' (case-insensitive, the default) OR a positive integer bps cap
+  // (<= 10000). 'auto' defers to LI.FI's liquidity-adaptive slippage on every quote; a number
+  // pins the legacy fixed cap + hard reject. Yields `number | 'auto'`.
+  MAX_SLIPPAGE_BPS: z
+    .string()
+    .default(DEFAULT_MAX_SLIPPAGE_BPS)
+    .transform((value, ctx) => {
+      const trimmed = value.trim();
+      if (trimmed.toLowerCase() === 'auto') return 'auto' as const;
+      const parsed = Number(trimmed);
+      if (!Number.isInteger(parsed) || parsed <= 0 || parsed > MAX_BPS) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "must be 'auto' or an integer in 1..10000" });
+        return z.NEVER;
+      }
+      return parsed;
+    }),
+  // maxPriceImpact decimal fraction (0.5 = 50%) used as the auto-mode guard. Range 0..1.
+  MAX_PRICE_IMPACT: z.coerce.number().gt(0).max(1).default(DEFAULT_MAX_PRICE_IMPACT),
   // Link the agent to LI.FI's hosted MCP server via the Anthropic MCP connector.
   AGENT_USE_LIFI_MCP: booleanFlag.default('true'),
   LIFI_MCP_URL: z.string().url().default(DEFAULT_LIFI_MCP_URL),

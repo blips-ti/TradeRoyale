@@ -32,7 +32,10 @@ Fleet-specific exceptions that do NOT apply here: `@octavlabs/secrets`,
 
 ## Architecture
 
-- `src/env.ts` — zod-validated env, fail-fast at boot.
+- `src/env.ts` — zod-validated env, fail-fast at boot. `MAX_SLIPPAGE_BPS` defaults to `auto`
+  (LI.FI liquidity-adaptive slippage for EVERY quote — swaps AND settlement liquidation — bounded
+  by `MAX_PRICE_IMPACT` + `toAmountMin`, no fixed-bps reject); set a positive integer to pin a
+  fixed bps cap with a hard reject instead.
 - `src/services/unlinkService.ts` — the ONLY `@unlink-xyz/sdk` adapter. All SDK drift is
   contained here. The SDK is canary; treat its `.d.ts` types as source of truth over the
   docs.

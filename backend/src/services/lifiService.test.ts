@@ -8,9 +8,17 @@ const WETH = '0x4200000000000000000000000000000000000006';
 const NATIVE = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
 const SEED = [USDC, WETH];
 const MAX_SLIPPAGE_BPS = 100;
+const MAX_PRICE_IMPACT = 0.5;
 
+// Numeric-cap service: preserves the legacy fixed-slippage + hard-bps-reject behavior.
 function buildService(): LifiService {
-  return new LifiService(CHAIN_ID, SEED, MAX_SLIPPAGE_BPS, undefined);
+  return new LifiService(CHAIN_ID, SEED, MAX_SLIPPAGE_BPS, undefined, MAX_PRICE_IMPACT);
+}
+
+// Auto-mode service (the new default): defers to LI.FI's liquidity-adaptive slippage, sends a
+// generous buffer + maxPriceImpact, and skips the fixed-bps reject.
+function buildAutoService(): LifiService {
+  return new LifiService(CHAIN_ID, SEED, "auto", undefined, MAX_PRICE_IMPACT);
 }
 
 function mockFetchOnce(body: unknown, ok = true, status = 200): void {
@@ -103,6 +111,53 @@ describe('LifiService', () => {
     });
   });
 
+  describe('getQuote (auto slippage mode — the default)', () => {
+    it('does not hard-reject a quote whose drop exceeds the legacy bps bound', async () => {
+      // Same payload the numeric-cap service rejects (10% drop > 100 bps) — auto must accept it.
+      mockFetchOnce({
+        ...validErc20Quote,
+        estimate: { ...validErc20Quote.estimate, toAmount: '1000000000000000', toAmountMin: '900000000000000' },
+      });
+      const quote = await buildAutoService().getQuote({ fromToken: USDC, toToken: WETH, fromAmount: '1000000', fromAddress: '0xa' });
+      expect(quote.toAmountMin).toBe('900000000000000');
+    });
+
+    it('sends a generous slippage buffer and the maxPriceImpact guard on the request', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => validErc20Quote,
+        text: async () => JSON.stringify(validErc20Quote),
+      } as Response);
+      await buildAutoService().getQuote({ fromToken: USDC, toToken: WETH, fromAmount: '1000000', fromAddress: '0xa' });
+      const url = new URL(String(fetchSpy.mock.calls[0]![0]), 'https://li.quest/v1');
+      expect(url.searchParams.get('maxPriceImpact')).toBe(String(MAX_PRICE_IMPACT));
+      expect(url.searchParams.get('slippage')).toBe('0.05');
+    });
+
+    it('still rejects an erc20 quote that carries a non-zero native value (guards unchanged)', async () => {
+      mockFetchOnce({ ...validErc20Quote, transactionRequest: { ...validErc20Quote.transactionRequest, value: '0x5' } });
+      await expect(
+        buildAutoService().getQuote({ fromToken: USDC, toToken: WETH, fromAmount: '1000000', fromAddress: '0xa' }),
+      ).rejects.toBeInstanceOf(LifiQuoteError);
+    });
+  });
+
+  describe('getQuote (numeric cap mode) sends a fixed slippage and no maxPriceImpact', () => {
+    it('derives slippage from the bps cap and omits maxPriceImpact', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => validErc20Quote,
+        text: async () => JSON.stringify(validErc20Quote),
+      } as Response);
+      await buildService().getQuote({ fromToken: USDC, toToken: WETH, fromAmount: '1000000', fromAddress: '0xa' });
+      const url = new URL(String(fetchSpy.mock.calls[0]![0]), 'https://li.quest/v1');
+      expect(url.searchParams.get('slippage')).toBe('0.01');
+      expect(url.searchParams.get('maxPriceImpact')).toBeNull();
+    });
+  });
+
   describe('getTokens', () => {
     it('returns only seed tokens with lowercased addresses', async () => {
       mockFetchOnce({
@@ -175,6 +230,28 @@ describe('LifiService', () => {
       expect(sent.toChain).toBe(String(CHAIN_ID));
       expect(sent.toAmount).toBe('1000000000000000');
       expect(sent.contractCalls[0].toContractCallData).toBe('0xd0e30db0');
+      // Numeric-cap mode pins a fixed slippage and does NOT send maxPriceImpact.
+      expect(sent.slippage).toBe('0.01');
+      expect(sent.maxPriceImpact).toBeUndefined();
+    });
+
+    it('sends the generous slippage + maxPriceImpact in auto mode', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          tool: 'custom',
+          action: { fromChainId: CHAIN_ID, toChainId: CHAIN_ID },
+          transactionRequest: { to: '0xrouter', data: '0xdeadbeef', value: '0x0' },
+          estimate: { approvalAddress: '0xspender', fromAmount: '1742000000', toAmount: '0', toAmountMin: '0' },
+        }),
+        text: async () => '',
+      } as Response);
+
+      await buildAutoService().getContractCallsQuote(contractCallsRequest);
+      const sent = JSON.parse((fetchSpy.mock.calls[0]![1] as RequestInit).body as string);
+      expect(sent.slippage).toBe('0.05');
+      expect(sent.maxPriceImpact).toBe(MAX_PRICE_IMPACT);
     });
 
     it('rejects a quote whose action is not same-chain Base', async () => {

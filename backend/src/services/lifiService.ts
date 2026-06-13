@@ -5,6 +5,9 @@ import { logger } from "../logger.js";
 
 const LIFI_BASE_URL = "https://li.quest/v1";
 const BPS_DENOMINATOR = 10_000;
+// Auto mode: LI.FI's omit-default is a flat 0.5%/step (too tight for illiquid tokens), so we send a
+// generous buffer and let maxPriceImpact + toAmountMin bound the real risk instead of a fixed cap.
+const AUTO_MODE_SLIPPAGE_DECIMAL = "0.05";
 
 // LI.FI native-token sentinel addresses (both EVM conventions). A `fromToken` matching one of
 // these means the swap spends the chain's native gas token, so the tx carries a non-zero value.
@@ -116,8 +119,9 @@ export class LifiService {
   constructor(
     private readonly chainId: number = env.CHAIN_ID,
     private readonly seedTokens: string[] = env.TRADEABLE_TOKENS,
-    private readonly maxSlippageBps: number = env.MAX_SLIPPAGE_BPS,
+    private readonly maxSlippageBps: number | "auto" = env.MAX_SLIPPAGE_BPS,
     private readonly apiKey: string | undefined = env.LIFI_API_KEY,
+    private readonly maxPriceImpact: number = env.MAX_PRICE_IMPACT,
   ) {}
 
   static getInstance(): LifiService {
@@ -138,6 +142,8 @@ export class LifiService {
       fromAddress: request.fromAddress,
       slippage: this.slippageDecimal(),
     });
+    // Auto mode bounds risk with maxPriceImpact (decimal) instead of a fixed bps reject.
+    if (this.isAutoMode()) params.set("maxPriceImpact", String(this.maxPriceImpact));
     const body = await this.fetchJson<LifiQuoteResponse>(`/quote?${params.toString()}`);
     return this.toSwapQuote(body, request);
   }
@@ -156,6 +162,8 @@ export class LifiService {
       fromAddress: request.fromAddress,
       toAmount: request.toAmount,
       slippage: this.slippageDecimal(),
+      // Auto mode bounds risk with maxPriceImpact instead of a fixed bps cap; omitted when numeric.
+      ...(this.isAutoMode() ? { maxPriceImpact: this.maxPriceImpact } : {}),
       contractCalls: [
         {
           fromAmount: request.toAmount,
@@ -213,7 +221,10 @@ export class LifiService {
     }
     const fromTokenIsNative = isNativeToken(request.fromToken);
     const value = this.resolveValue(tx.value, fromTokenIsNative);
-    this.assertSlippageWithinBound(estimate.toAmount, estimate.toAmountMin);
+    // Auto mode skips the fixed-bps reject (maxPriceImpact + toAmountMin guard instead); a numeric
+    // cap keeps the legacy hard rejection. toAmountMin still drives the executed minimum either way.
+    const cap = this.maxSlippageBps;
+    if (cap !== "auto") this.assertSlippageWithinBound(estimate.toAmount, estimate.toAmountMin, cap);
     return {
       transactionRequest: { to: tx.to, data: tx.data, value },
       approvalAddress: estimate.approvalAddress,
@@ -285,16 +296,16 @@ export class LifiService {
     return rawValue.startsWith("0x") ? new BigNumber(rawValue.slice(2) || "0", 16) : new BigNumber(rawValue);
   }
 
-  private assertSlippageWithinBound(toAmount: string, toAmountMin: string): void {
+  private assertSlippageWithinBound(toAmount: string, toAmountMin: string, bps: number): void {
     const expected = new BigNumber(toAmount);
     const floor = new BigNumber(toAmountMin);
     if (expected.isZero()) {
       throw new LifiQuoteError("Quote toAmount is zero");
     }
-    const maxDrop = expected.times(this.maxSlippageBps).div(BPS_DENOMINATOR);
+    const maxDrop = expected.times(bps).div(BPS_DENOMINATOR);
     if (expected.minus(floor).gt(maxDrop)) {
       throw new LifiQuoteError(
-        `Quote slippage exceeds ${this.maxSlippageBps} bps (toAmount ${toAmount}, toAmountMin ${toAmountMin})`,
+        `Quote slippage exceeds ${bps} bps (toAmount ${toAmount}, toAmountMin ${toAmountMin})`,
       );
     }
   }
@@ -310,7 +321,14 @@ export class LifiService {
     };
   }
 
+  private isAutoMode(): boolean {
+    return this.maxSlippageBps === "auto";
+  }
+
+  // Auto mode sends a generous fixed buffer (real risk bounded by maxPriceImpact + toAmountMin);
+  // numeric mode converts the configured bps cap to LI.FI's decimal slippage form.
   private slippageDecimal(): string {
+    if (this.maxSlippageBps === "auto") return AUTO_MODE_SLIPPAGE_DECIMAL;
     return (this.maxSlippageBps / Number(BPS_DENOMINATOR)).toString();
   }
 
