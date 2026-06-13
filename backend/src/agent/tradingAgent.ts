@@ -111,7 +111,6 @@ export class TradingAgent {
     let finalMessage: BetaMessage | undefined;
     for await (const stream of runner) {
       stream.on('text', (delta) => this.streamDelta(game.id, player.id, delta));
-      stream.on('thinking', (delta) => this.streamDelta(game.id, player.id, delta));
       stream.on('contentBlock', (block) => {
         if (block.type === 'tool_use') {
           // Surface the token pair (when the tool has one) so the arena shows what it's doing.

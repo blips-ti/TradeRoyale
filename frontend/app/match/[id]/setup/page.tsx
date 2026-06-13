@@ -2,44 +2,18 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowRight, Check, Cpu, Sparkles, Wallet } from "lucide-react";
+import { ArrowRight, Check, Cpu, Wallet } from "lucide-react";
 import { useAuth } from "@/app/_lib/auth";
-import { useGame, type AgentConfig } from "@/app/_lib/store";
+import { useGame } from "@/app/_lib/store";
 import { useAchievements } from "@/app/_lib/achievementsStore";
 import { useMatchView } from "@/app/_lib/useMatchView";
 import { api } from "@/app/_lib/api";
 import { AppShell } from "@/app/_components/AppShell";
 import { BotAvatar, Button, Card, Reveal, Spinner } from "@/app/_components/ui";
 
-const RISKS: { key: AgentConfig["risk"]; label: string; desc: string; starter: string }[] = [
-  {
-    key: "sniper",
-    label: "Sniper",
-    desc: "Patient. Few, high-conviction entries.",
-    starter:
-      "Trade patiently. Only take high-conviction setups on majors like ETH and WETH. Few positions, tight risk, cut losers fast, never chase a pump.",
-  },
-  {
-    key: "balanced",
-    label: "Balanced",
-    desc: "Measured risk, steady compounding.",
-    starter:
-      "Trade with measured risk on Base majors. Scale into confirmed trends, take profit into strength, keep position sizes moderate and protect the downside.",
-  },
-  {
-    key: "degen",
-    label: "Degen",
-    desc: "Max aggression. Send it.",
-    starter:
-      "Maximum aggression. Chase momentum, size up on breakouts, rotate fast into whatever is pumping on Base. Cut dead trades instantly and keep swinging.",
-  },
-];
-
-const TEMPLATES = [
-  "Momentum scalper: ride strong trends on majors, cut losers fast, never hold through reversals.",
-  "Mean-reversion: fade extremes, buy fear, sell euphoria, tight risk per trade.",
-  "News/narrative hunter: rotate into whatever is pumping, take profit into strength.",
-];
+// One default directive — no personas. The agent obeys live orders and nothing else.
+const DEFAULT_STRATEGY =
+  "Don't think, don't analyze, don't talk — just do exactly what I say, nothing more. No strategy, no plans. Until I send an instruction, hold USDC and wait. When I send one, use LI.FI to do it immediately, state the action in one line, and stop.";
 
 export default function SetupPage() {
   return (
@@ -61,8 +35,7 @@ function Setup() {
   const [me, setMe] = useState<{ playerId: string; displayName: string; confirmed: boolean } | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const [risk, setRisk] = useState<AgentConfig["risk"]>("balanced");
-  const [prompt, setPrompt] = useState("");
+  const [prompt, setPrompt] = useState(DEFAULT_STRATEGY);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [hasStrategy, setHasStrategy] = useState(false);
@@ -132,11 +105,6 @@ function Setup() {
     );
   }
 
-  const pickPersona = (key: AgentConfig["risk"]) => {
-    setRisk(key);
-    setPrompt(RISKS.find((r) => r.key === key)!.starter);
-  };
-
   const save = async () => {
     const text = prompt.trim();
     if (!text) {
@@ -147,7 +115,7 @@ function Setup() {
     setError(null);
     try {
       await api.setStrategy(params.id, me.playerId, text);
-      setAgent({ name: me.displayName, risk, prompt: text });
+      setAgent({ name: me.displayName, risk: "balanced", prompt: text });
       tryUnlock("agent");
       setHasStrategy(true);
       setSaved(true);
@@ -200,53 +168,23 @@ function Setup() {
         </div>
       </Reveal>
 
-      {/* risk persona */}
-      <Reveal delay={0.08}>
-        <div className="flex flex-col gap-2">
-          <Label>Persona</Label>
-          <div className="grid grid-cols-3 gap-2">
-            {RISKS.map((r) => (
-              <button
-                key={r.key}
-                onClick={() => pickPersona(r.key)}
-                className={`rounded-card border p-3 text-left transition ${
-                  risk === r.key
-                    ? "border-[color:var(--color-lime)] bg-[color:var(--color-lime)]/10"
-                    : "border-[color:var(--color-line)] bg-[color:var(--color-surface)]"
-                }`}
-              >
-                <p className="font-display text-[14px] font-bold text-fg">{r.label}</p>
-                <p className="mt-1 text-[11px] leading-tight text-muted">{r.desc}</p>
-              </button>
-            ))}
-          </div>
-        </div>
-      </Reveal>
-
       {/* strategy prompt */}
       <Reveal delay={0.1}>
         <div className="flex flex-col gap-2">
-          <Label>Strategy prompt</Label>
+          <Label>Instructions</Label>
           <Card className="p-4">
             <textarea
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
-              rows={5}
-              placeholder="Tell your agent how to trade. e.g. 'Trade ETH and WETH momentum, scale in on breakouts, never risk more than 10% per position…'"
+              rows={6}
+              placeholder="Tell your agent exactly what to do. It obeys your live orders and nothing else."
               className="w-full resize-none bg-transparent text-[14px] leading-relaxed text-fg outline-none placeholder:text-dim"
             />
-            <div className="mt-2 flex flex-wrap gap-1.5 border-t border-[color:var(--color-line)] pt-3">
-              {TEMPLATES.map((t, i) => (
-                <button
-                  key={i}
-                  onClick={() => setPrompt(t)}
-                  className="inline-flex items-center gap-1 rounded-pill bg-[color:var(--color-surface-2)] px-2.5 py-1 text-[11px] font-medium text-muted transition hover:text-fg"
-                >
-                  <Sparkles className="h-3 w-3" /> Template {i + 1}
-                </button>
-              ))}
-            </div>
           </Card>
+          <p className="px-1 text-[11.5px] leading-snug text-dim">
+            Your agent doesn&apos;t freelance — it waits for the orders you send in The Arena and
+            executes them on LI.FI. Edit this only if you want different default behaviour.
+          </p>
         </div>
       </Reveal>
 

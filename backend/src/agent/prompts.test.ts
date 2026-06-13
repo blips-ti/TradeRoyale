@@ -56,7 +56,7 @@ describe('buildSystemPrompt', () => {
 
   it('falls back to a conservative default when no strategy is provided', () => {
     const prompt = buildSystemPrompt(baseInput({ strategyPrompt: undefined }));
-    expect(prompt).toContain('No strategy provided');
+    expect(prompt).toContain('just do exactly what the player says');
   });
 
   it('describes instruction-driven turns + the wait tool and drops the T-5min / unwind-before-deadline language', () => {

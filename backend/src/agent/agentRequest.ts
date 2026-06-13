@@ -35,7 +35,8 @@ export function buildAgentRequestParams(input: AgentRequestInput): BetaToolRunne
   const base: BetaToolRunnerParams = {
     model: input.model,
     max_tokens: input.maxTokens,
-    thinking: { type: 'adaptive' },
+    // Thinking OFF: the agent must act, not narrate a long internal analysis.
+    thinking: { type: 'disabled' },
     system: input.system,
     tools: input.tools,
     max_iterations: input.maxIterations,
