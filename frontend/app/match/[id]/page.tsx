@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { ArrowRight, Check, Clock, Lock, ShieldCheck, Users, Wallet, WifiOff, X } from "lucide-react";
@@ -9,7 +9,7 @@ import { useAuth } from "@/app/_lib/auth";
 import { useGame } from "@/app/_lib/store";
 import { api } from "@/app/_lib/api";
 import { depositEntry, type DepositPhase } from "@/app/_lib/unlinkDeposit";
-import type { Game, JoinResult, PublicPlayer } from "@/app/_lib/types";
+import type { Game, PublicPlayer } from "@/app/_lib/types";
 import { bannerSeedFor, gameName } from "@/app/_lib/gameView";
 import { bucketOf, formatUsd, livePoolBaseUnits } from "@/app/_lib/units";
 import { formatDelta, useNow } from "@/app/_lib/useNow";
@@ -37,6 +37,31 @@ function MatchDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [depositOpen, setDepositOpen] = useState(false);
+  // The caller's OWN player in this game (created vault may be unfunded) — drives the CTA.
+  const [mine, setMine] = useState<{ playerId: string; deposited: boolean } | null>(null);
+
+  const reloadMine = useCallback(async () => {
+    if (!authenticated) {
+      setMine(null);
+      return;
+    }
+    try {
+      const res = await api.getActive();
+      if (res.game?.id === params.id && res.player) {
+        setMine({ playerId: res.player.id, deposited: res.player.depositStatus === "confirmed" });
+      } else {
+        setMine(null);
+      }
+    } catch {
+      setMine(null);
+    }
+  }, [authenticated, params.id]);
+
+  useEffect(() => {
+    reloadMine();
+    const t = setInterval(reloadMine, 4000);
+    return () => clearInterval(t);
+  }, [reloadMine]);
 
   // Fetch + light poll the game.
   useEffect(() => {
@@ -84,18 +109,14 @@ function MatchDetail() {
   const bucket = bucketOf(game.status);
   const live = bucket === "live";
   const name = gameName(game.id);
-  const youreIn = joinedMatchId === game.id;
-  const lockedOut = !!joinedMatchId && !youreIn;
+  // "In" only counts once the deposit is confirmed; a created-but-unfunded vault is "pending".
+  const confirmedHere = mine?.deposited === true;
+  const pendingHere = !!mine && !mine.deposited;
+  const lockedOut = !!joinedMatchId && joinedMatchId !== game.id;
   const entryLabel = formatUsd(game.entryAmount, undefined, true);
   const poolLabel = formatUsd(livePoolBaseUnits(players.length, game.entryAmount), undefined, true);
   const spotsLeft = Math.max(game.maxPlayers - players.length, 0);
   const endsAtMs = game.endsAt ? Date.parse(game.endsAt) : 0;
-
-  // Joining only establishes the BE session. The agent is configured later (post-deposit),
-  // and only a real strategy save sets the local agent — so "join" never fakes an agent.
-  const onJoined = (res: JoinResult) => {
-    setSession(game.id, res.playerId);
-  };
 
   return (
     <div className="flex flex-1 flex-col gap-4 pt-1">
@@ -169,19 +190,29 @@ function MatchDetail() {
               {live ? "Registration closed" : "Match ended"}
             </Button>
           )
-        ) : youreIn ? (
+        ) : confirmedHere ? (
           <Button fullWidth onClick={() => router.push(`/match/${game.id}/${live ? "live" : "setup"}`)}>
             {live ? "Enter The Arena" : "Set up your agent"}
             <ArrowRight className="h-4 w-4" />
+          </Button>
+        ) : pendingHere ? (
+          <Button fullWidth onClick={() => setDepositOpen(true)}>
+            <Wallet className="h-4 w-4" /> Complete your deposit · {entryLabel}
           </Button>
         ) : lockedOut ? (
           <Button variant="dark" fullWidth disabled>
             <Lock className="h-4 w-4" /> You&apos;re already in a Match
           </Button>
         ) : bucket === "ongoing" ? (
-          <Button fullWidth onClick={() => setDepositOpen(true)}>
-            Register · Buy in {entryLabel}
-          </Button>
+          spotsLeft > 0 ? (
+            <Button fullWidth onClick={() => setDepositOpen(true)}>
+              Deposit {entryLabel} to join
+            </Button>
+          ) : (
+            <Button variant="dark" fullWidth disabled>
+              Match full
+            </Button>
+          )
         ) : (
           <Button variant="dark" fullWidth disabled>
             {live ? "Registration closed" : "Match ended"}
@@ -197,8 +228,14 @@ function MatchDetail() {
             entryLabel={entryLabel}
             defaultAgentName={user?.name ?? "Agent"}
             ownerAddress={user?.address ?? null}
+            token={game.entryToken}
+            amount={game.entryAmount}
+            existingPlayerId={pendingHere ? mine?.playerId : undefined}
             onClose={() => setDepositOpen(false)}
-            onJoined={onJoined}
+            onConfirmed={(pid) => {
+              setSession(game.id, pid);
+              reloadMine();
+            }}
             onContinue={() => router.push(`/match/${game.id}/setup`)}
           />
         )}
@@ -218,16 +255,19 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
   );
 }
 
-/* Two-step buy-in: name your agent + join (creates the vault/session), then the deposit
-   instructions. The actual Unlink browser deposit is the next integration step. */
+/* One mandatory action: name your agent → create the vault → fire the on-chain deposit from
+   the user's wallet → wait for the BE to confirm. No deposit, no join. */
 function BuyInSheet({
   gameId,
   name,
   entryLabel,
   defaultAgentName,
   ownerAddress,
+  token,
+  amount,
+  existingPlayerId,
   onClose,
-  onJoined,
+  onConfirmed,
   onContinue,
 }: {
   gameId: string;
@@ -235,77 +275,63 @@ function BuyInSheet({
   entryLabel: string;
   defaultAgentName: string;
   ownerAddress: string | null;
+  token: string;
+  amount: string;
+  existingPlayerId?: string;
   onClose: () => void;
-  onJoined: (res: JoinResult) => void;
+  onConfirmed: (playerId: string) => void;
   onContinue: () => void;
 }) {
   const { wallets } = useWallets();
   const [agentName, setAgentName] = useState(defaultAgentName);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [joined, setJoined] = useState<JoinResult | null>(null);
-  const [depositing, setDepositing] = useState(false);
+  const [running, setRunning] = useState(false);
   const [phase, setPhase] = useState<DepositPhase | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState(false);
 
-  const buyIn = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await api.joinGame(gameId, {
-        displayName: agentName.trim() || "Agent",
-      });
-      setJoined(res);
-      onJoined(res);
-    } catch (e) {
-      setError((e as Error).message || "Couldn't join");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const PHASE_LABEL: Record<DepositPhase, string> = {
-    preparing: "Preparing…",
-    registering: "Registering your vault…",
+    preparing: "Setting up your vault…",
+    registering: "Registering…",
     depositing: "Confirm in your wallet…",
     confirming: "Confirming deposit…",
   };
 
   // Polls the BE until its DepositWatcher confirms the shielded balance reached the entry amount.
   const waitForConfirmed = async (pid: string) => {
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 40; i++) {
       const detail = await api.getPlayer(gameId, pid).catch(() => null);
       if (detail?.player.depositStatus === "confirmed") return;
       await new Promise((r) => setTimeout(r, 3000));
     }
-    throw new Error("Deposit not detected yet — give it a moment, then retry.");
+    throw new Error("Deposit sent but not confirmed yet — give it a moment, then retry.");
   };
 
-  const runDeposit = async () => {
-    if (!joined) return;
-    setDepositing(true);
+  // Create the vault (if new) then immediately fire the deposit tx; confirm = joined.
+  const run = async () => {
+    setRunning(true);
     setError(null);
     setPhase("preparing");
     try {
-      const exported = await api.getUnlinkAccount(gameId, joined.playerId);
+      let pid = existingPlayerId ?? null;
+      if (!pid) {
+        const res = await api.joinGame(gameId, { displayName: agentName.trim() || "Agent" });
+        pid = res.playerId;
+      }
+      const exported = await api.getUnlinkAccount(gameId, pid);
       const wallet =
         wallets.find((w) => w.address?.toLowerCase() === ownerAddress?.toLowerCase()) ?? wallets[0];
       if (!wallet) throw new Error("No wallet connected to deposit from");
+      // Deposit happens on Base mainnet — make sure the wallet is on the right chain first.
+      await wallet.switchChain(8453).catch(() => {});
       const provider = (await wallet.getEthereumProvider()) as Parameters<typeof depositEntry>[0]["provider"];
-      await depositEntry({
-        playerId: joined.playerId,
-        token: joined.deposit.token,
-        amount: joined.deposit.amount,
-        exported,
-        provider,
-        onPhase: setPhase,
-      });
-      await waitForConfirmed(joined.playerId);
+      await depositEntry({ playerId: pid, token, amount, exported, provider, onPhase: setPhase });
+      await waitForConfirmed(pid);
       setConfirmed(true);
+      onConfirmed(pid);
     } catch (e) {
       setError((e as Error).message || "Deposit failed");
     } finally {
-      setDepositing(false);
+      setRunning(false);
       setPhase(null);
     }
   };
@@ -317,7 +343,7 @@ function BuyInSheet({
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
     >
-      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/60" onClick={running ? undefined : onClose} />
       <motion.div
         initial={{ y: 40 }}
         animate={{ y: 0 }}
@@ -327,52 +353,17 @@ function BuyInSheet({
       >
         <div className="mb-4 flex items-center justify-between">
           <h3 className="font-display text-[18px] font-bold uppercase tracking-tight">
-            {joined ? "Fund your vault" : "Buy in"}
+            {confirmed ? "You're in!" : existingPlayerId ? "Complete your deposit" : `Join ${name}`}
           </h3>
-          <button onClick={onClose} className="text-muted">
+          <button onClick={onClose} className="text-muted" disabled={running}>
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        {!joined ? (
-          <>
-            <label className="mb-1.5 block px-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted">
-              Name your agent
-            </label>
-            <input
-              value={agentName}
-              onChange={(e) => setAgentName(e.target.value)}
-              maxLength={40}
-              placeholder="Your trader's name"
-              className="mb-3 w-full rounded-card border border-[color:var(--color-line)] bg-[color:var(--color-surface-2)] px-4 py-3 font-display text-[16px] font-semibold text-fg outline-none placeholder:text-dim"
-            />
-
-            <div className="rounded-card bg-[color:var(--color-surface-2)] p-4">
-              <div className="flex items-center justify-between">
-                <span className="flex items-center gap-2 text-[14px] text-muted">
-                  <Wallet className="h-4 w-4" /> Buy in to {name}
-                </span>
-                <span className="font-display text-[22px] font-bold text-[color:var(--color-lime)] tnum">{entryLabel}</span>
-              </div>
-            </div>
-
-            <div className="mt-3 flex items-start gap-2 rounded-card border border-[color:var(--color-line)] px-4 py-3 text-[12.5px] text-muted">
-              <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[color:var(--color-lime)]" />
-              <span>
-                Your buy-in is locked in the pool for the whole Match. <b className="text-fg">You can&apos;t leave once you join.</b> Winner takes the pot.
-              </span>
-            </div>
-
-            {error && <p className="mt-3 text-center text-[12.5px] text-[color:var(--color-loss)]">{error}</p>}
-
-            <Button fullWidth className="mt-4" onClick={buyIn} disabled={loading}>
-              {loading ? <><Spinner /> Creating your vault…</> : `Buy in ${entryLabel}`}
-            </Button>
-          </>
-        ) : confirmed ? (
+        {confirmed ? (
           <>
             <div className="flex items-center gap-2 rounded-card bg-[color:var(--color-profit)]/12 px-4 py-3 text-[13px] text-[color:var(--color-profit)]">
-              <Check className="h-4 w-4" /> Deposit confirmed — your vault is funded.
+              <Check className="h-4 w-4" /> Deposit confirmed — your seat is locked.
             </div>
             <Button fullWidth className="mt-4" onClick={onContinue}>
               Set up your agent <ArrowRight className="h-4 w-4" />
@@ -380,32 +371,54 @@ function BuyInSheet({
           </>
         ) : (
           <>
-            <div className="flex items-center gap-2 rounded-card bg-[color:var(--color-profit)]/12 px-4 py-3 text-[13px] text-[color:var(--color-profit)]">
-              <Check className="h-4 w-4" /> Vault created — fund it to lock your seat.
-            </div>
+            {!existingPlayerId && (
+              <>
+                <label className="mb-1.5 block px-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted">
+                  Name your agent
+                </label>
+                <input
+                  value={agentName}
+                  onChange={(e) => setAgentName(e.target.value)}
+                  maxLength={40}
+                  disabled={running}
+                  placeholder="Your trader's name"
+                  className="mb-3 w-full rounded-card border border-[color:var(--color-line)] bg-[color:var(--color-surface-2)] px-4 py-3 font-display text-[16px] font-semibold text-fg outline-none placeholder:text-dim disabled:opacity-60"
+                />
+              </>
+            )}
 
-            <div className="mt-4 rounded-card bg-[color:var(--color-surface-2)] p-4">
+            <div className="rounded-card bg-[color:var(--color-surface-2)] p-4">
               <div className="flex items-center justify-between">
                 <span className="flex items-center gap-2 text-[14px] text-muted">
-                  <Wallet className="h-4 w-4" /> Deposit to your private vault
+                  <Wallet className="h-4 w-4" /> Deposit to enter {name}
                 </span>
                 <span className="font-display text-[22px] font-bold text-[color:var(--color-lime)] tnum">{entryLabel}</span>
               </div>
               <p className="mt-2 text-[12px] text-muted">
-                Funds move from your wallet into the Unlink shielded pool. Your agent trades from a
-                wallet linked to it the moment the deposit confirms.
+                {entryLabel} moves from your wallet into your private Unlink vault. Your agent trades
+                from a wallet linked to it once the deposit confirms.
               </p>
+            </div>
+
+            <div className="mt-3 flex items-start gap-2 rounded-card border border-[color:var(--color-line)] px-4 py-3 text-[12.5px] text-muted">
+              <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[color:var(--color-lime)]" />
+              <span>
+                The deposit is required to enter. <b className="text-fg">No deposit, no seat.</b> Buy-in is
+                locked for the whole Match — winner takes the pot.
+              </span>
             </div>
 
             {error && <p className="mt-3 text-center text-[12.5px] text-[color:var(--color-loss)]">{error}</p>}
 
-            <Button fullWidth className="mt-4" onClick={runDeposit} disabled={depositing}>
-              {depositing ? (
+            <Button fullWidth className="mt-4" onClick={run} disabled={running}>
+              {running ? (
                 <>
-                  <Spinner /> {phase ? PHASE_LABEL[phase] : "Depositing…"}
+                  <Spinner /> {phase ? PHASE_LABEL[phase] : "Working…"}
                 </>
-              ) : (
+              ) : existingPlayerId ? (
                 `Deposit ${entryLabel}`
+              ) : (
+                `Deposit ${entryLabel} to join`
               )}
             </Button>
           </>

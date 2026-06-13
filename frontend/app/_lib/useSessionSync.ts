@@ -7,8 +7,11 @@ import { useGame } from "./store";
 /**
  * Reconciles local session state with the backend (`GET /games/me`, authorized by the Privy
  * token), which is the source of truth — no localStorage. Keyed on the user id so connect,
- * reconnect, a new device, OR a wallet switch all re-sync. If the backend reports no active
- * game, local state is cleared (so a fresh wallet starts from 0). Best-effort; silent on failure.
+ * reconnect, a new device, OR a wallet switch all re-sync.
+ *
+ * A player only counts as "joined" once their deposit is CONFIRMED — a created-but-unfunded
+ * vault must never show as registered. If the backend reports no active game (or a still-pending
+ * deposit), local state is cleared. Best-effort; silent on failure.
  */
 export function useSessionSync(userId: string | null) {
   const setSession = useGame((s) => s.setSession);
@@ -24,7 +27,8 @@ export function useSessionSync(userId: string | null) {
       .getActive()
       .then((res) => {
         if (!alive) return;
-        if (res.game && res.player) setSession(res.game.id, res.player.id);
+        const confirmed = res.game && res.player && res.player.depositStatus === "confirmed";
+        if (confirmed) setSession(res.game!.id, res.player!.id);
         else reset();
       })
       .catch(() => {});
