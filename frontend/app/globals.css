@@ -1,0 +1,115 @@
+@import "tailwindcss";
+
+/* ── AlphaArena ──────────────────────────────────────────────────────────────
+   Gamified trading-tournament aesthetic: near-black canvas, dark rounded cards,
+   an acid-lime primary, electric purple secondary, and a squared techno typeface
+   (Chakra Petch). Loud, high-engagement, retail/degen.
+   ──────────────────────────────────────────────────────────────────────────── */
+@theme {
+  --color-bg: #0a0c10;
+  --color-surface: #15181e;     /* card */
+  --color-surface-2: #1d212a;   /* inner chips / elevated */
+  --color-surface-3: #262b35;
+  --color-fg: #ffffff;
+  --color-muted: #8b909c;
+  --color-dim: #5b616d;
+  --color-line: rgba(255, 255, 255, 0.06);
+  --color-line-strong: rgba(255, 255, 255, 0.12);
+
+  /* Brand accents. */
+  --color-lime: #c5f72b;
+  --color-lime-dim: #a6d61f;
+  --color-purple: #7b5cff;
+  --color-purple-dim: #6747e0;
+  --color-pink: #ff36a3;
+  --color-cyan: #34d6e0;
+
+  /* Market semantics. */
+  --color-profit: #8be34a;
+  --color-loss: #ff4d6d;
+
+  --radius-card: 1.4rem;
+  --radius-chip: 0.7rem;
+  --radius-pill: 9999px;
+
+  --shadow-card: 0 16px 40px -22px rgb(0 0 0 / 0.8);
+  --shadow-lime: 0 14px 36px -14px rgb(197 247 43 / 0.45);
+  --shadow-purple: 0 14px 36px -14px rgb(123 92 255 / 0.5);
+
+  --font-sans: var(--font-chakra), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-chakra), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+@layer base {
+  html,
+  body {
+    background: var(--color-bg);
+    color: var(--color-fg);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Faint top glow so the canvas isn't dead flat. */
+  body {
+    background-image:
+      radial-gradient(820px 420px at 50% -12%, rgb(197 247 43 / 0.08), transparent 60%),
+      radial-gradient(640px 360px at 100% 8%, rgb(52 214 224 / 0.06), transparent 55%);
+    background-attachment: fixed;
+  }
+
+  ::selection {
+    background: rgb(197 247 43 / 0.3);
+    color: #fff;
+  }
+
+  .font-mono {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer utilities {
+  .glass {
+    background: color-mix(in srgb, var(--color-surface) 80%, transparent);
+    backdrop-filter: saturate(140%) blur(16px);
+    -webkit-backdrop-filter: saturate(140%) blur(16px);
+  }
+
+  .text-balance { text-wrap: balance; }
+
+  /* number / heading polish */
+  .tnum { font-variant-numeric: tabular-nums; }
+
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { scrollbar-width: none; }
+
+  @keyframes float-slow {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-5px); }
+  }
+  .float-slow { animation: float-slow 6s ease-in-out infinite; }
+
+  @keyframes pulse-dot {
+    0% { box-shadow: 0 0 0 0 rgb(139 227 74 / 0.5); }
+    70% { box-shadow: 0 0 0 8px rgb(139 227 74 / 0); }
+    100% { box-shadow: 0 0 0 0 rgb(139 227 74 / 0); }
+  }
+  .pulse-dot { animation: pulse-dot 1.8s cubic-bezier(0.66, 0, 0, 1) infinite; }
+
+  @keyframes spin-slow { to { transform: rotate(360deg); } }
+  .spin-slow { animation: spin-slow 1s linear infinite; }
+
+  /* Live competition: animated red broadcast glow on the card border. */
+  @keyframes live-glow {
+    0%, 100% { box-shadow: 0 0 0 1px rgb(255 77 109 / 0.45), 0 0 16px -4px rgb(255 77 109 / 0.4); }
+    50% { box-shadow: 0 0 0 1px rgb(255 77 109 / 0.9), 0 0 26px -2px rgb(255 77 109 / 0.7); }
+  }
+  .live-card { animation: live-glow 2.2s ease-in-out infinite; }
+
+  @keyframes pulse-live {
+    0% { box-shadow: 0 0 0 0 rgb(255 77 109 / 0.6); }
+    70% { box-shadow: 0 0 0 7px rgb(255 77 109 / 0); }
+    100% { box-shadow: 0 0 0 0 rgb(255 77 109 / 0); }
+  }
+  .pulse-live { animation: pulse-live 1.5s cubic-bezier(0.66, 0, 0, 1) infinite; }
+}

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2080" height="420" viewBox="0 0 2080 420">
+
+<rect x="60" y="60.0" width="300" height="300" rx="68" fill="#C5F72B"/>
+<g transform="translate(117.0,117.0) scale(7.75)"><path d="M3 17 L3 6.5 L8.2 10.8 L12 3.5 L15.8 10.8 L21 6.5 L21 17 Z M3 18.6 H21 V21 H3 Z" fill="#0A0C10" fill-rule="evenodd"/></g>
+<text x="424" y="210.0" dominant-baseline="central" font-family="Chakra Petch" font-weight="700" font-size="190" letter-spacing="-2">
+<tspan fill="#FFFFFF">TRADE</tspan><tspan fill="#C5F72B" dx="28">ROYALE</tspan></text>
+</svg>
