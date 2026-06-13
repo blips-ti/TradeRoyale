@@ -2,12 +2,14 @@
 
 import { AnimatePresence, motion } from "framer-motion";
 import { useRouter } from "next/navigation";
-import { LogOut, Swords, Trophy, User, Wallet, X } from "lucide-react";
+import { Download, LogOut, Swords, Trophy, User, Wallet, X } from "lucide-react";
 import { useAuth } from "@/app/_lib/auth";
+import { usePwaInstall } from "@/app/_lib/usePwaInstall";
 import { Avatar } from "./ui";
 
 export function MenuSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { authenticated, user, login, logout } = useAuth();
+  const { canInstall, install } = usePwaInstall();
   const router = useRouter();
 
   const go = (href: string) => {
@@ -56,6 +58,17 @@ export function MenuSheet({ open, onClose }: { open: boolean; onClose: () => voi
               <Row icon={Swords} label="Matches" onClick={() => go("/dashboard")} />
               <Row icon={Trophy} label="My Match" onClick={() => go("/dashboard")} />
               <Row icon={User} label="Profile & Achievements" onClick={() => go("/profile")} />
+              {canInstall && (
+                <Row
+                  icon={Download}
+                  label="Install app"
+                  highlight
+                  onClick={() => {
+                    onClose();
+                    install();
+                  }}
+                />
+              )}
             </div>
 
             <div className="mt-4 border-t border-[color:var(--color-line)] pt-4">
@@ -93,17 +106,27 @@ function Row({
   icon: Icon,
   label,
   onClick,
+  highlight = false,
 }: {
   icon: React.ElementType;
   label: string;
   onClick: () => void;
+  highlight?: boolean;
 }) {
   return (
     <button
       onClick={onClick}
-      className="flex w-full items-center gap-3 rounded-card border border-[color:var(--color-line)] bg-[color:var(--color-surface)] px-4 py-3.5 text-left transition active:scale-[0.99]"
+      className={`flex w-full items-center gap-3 rounded-card border px-4 py-3.5 text-left transition active:scale-[0.99] ${
+        highlight
+          ? "border-[color:var(--color-lime)]/40 bg-[color:var(--color-lime)]/10"
+          : "border-[color:var(--color-line)] bg-[color:var(--color-surface)]"
+      }`}
     >
-      <span className="grid h-9 w-9 place-items-center rounded-full bg-[color:var(--color-surface-2)] text-[color:var(--color-lime)]">
+      <span
+        className={`grid h-9 w-9 place-items-center rounded-full ${
+          highlight ? "bg-[color:var(--color-lime)] text-black" : "bg-[color:var(--color-surface-2)] text-[color:var(--color-lime)]"
+        }`}
+      >
         <Icon className="h-4 w-4" />
       </span>
       <span className="text-[15px] font-semibold text-fg">{label}</span>
