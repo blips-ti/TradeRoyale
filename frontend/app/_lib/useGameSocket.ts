@@ -14,9 +14,10 @@ type Status = "connecting" | "open" | "closed";
 /**
  * Subscribes to the backend's per-game event stream (`/ws/games/:gameId`).
  * Calls `onEvent` for every GameEvent. Auto-reconnects with backoff.
- * Pass `gameId = null` to stay disconnected.
+ * Pass `gameId = null` to stay disconnected. `playerId` (the caller's own player) is sent as
+ * `?pid=` so the backend scopes private events (your agent's logs/trades) to your socket only.
  */
-export function useGameSocket(gameId: string | null, onEvent: (e: GameEvent) => void) {
+export function useGameSocket(gameId: string | null, onEvent: (e: GameEvent) => void, playerId?: string | null) {
   const [status, setStatus] = React.useState<Status>("closed");
   const cbRef = React.useRef(onEvent);
   cbRef.current = onEvent;
@@ -30,7 +31,8 @@ export function useGameSocket(gameId: string | null, onEvent: (e: GameEvent) => 
 
     const connect = () => {
       setStatus("connecting");
-      ws = new WebSocket(`${WS_URL}/games/${gameId}`);
+      const pidQuery = playerId ? `?pid=${encodeURIComponent(playerId)}` : "";
+      ws = new WebSocket(`${WS_URL}/games/${gameId}${pidQuery}`);
       ws.onopen = () => {
         retry = 0;
         setStatus("open");
@@ -57,7 +59,7 @@ export function useGameSocket(gameId: string | null, onEvent: (e: GameEvent) => 
       clearTimeout(timer);
       ws?.close();
     };
-  }, [gameId]);
+  }, [gameId, playerId]);
 
   return { status, connected: status === "open" };
 }

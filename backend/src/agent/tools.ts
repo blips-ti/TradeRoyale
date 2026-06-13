@@ -251,8 +251,7 @@ async function runExecuteSwap(
     context.touchedTokens.add(args.toToken.toLowerCase());
     const trade = persistableTrade(context, 'swap', result);
     await deps.trades.append(trade);
-    deps.hub.broadcast('trade_executed', context.game.id, {
-      playerId: context.player.id,
+    deps.hub.broadcastToPlayer('trade_executed', context.game.id, context.player.id, {
       kind: 'swap',
       fromToken: result.fromToken,
       toToken: result.toToken,
@@ -269,8 +268,7 @@ async function runExecuteSwap(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logger.warn({ playerId: context.player.id, err: message }, '[agent] execute_swap failed');
-    deps.hub.broadcast('trade_failed', context.game.id, {
-      playerId: context.player.id,
+    deps.hub.broadcastToPlayer('trade_failed', context.game.id, context.player.id, {
       kind: 'swap',
       fromToken: args.fromToken,
       toToken: args.toToken,
@@ -309,8 +307,7 @@ async function runExecuteProtocolAction(
     context.touchedTokens.add(args.toToken.toLowerCase());
     const trade = persistableTrade(context, 'contract_call', result, args.description);
     await deps.trades.append(trade);
-    deps.hub.broadcast('trade_executed', context.game.id, {
-      playerId: context.player.id,
+    deps.hub.broadcastToPlayer('trade_executed', context.game.id, context.player.id, {
       kind: 'contract_call',
       fromToken: result.fromToken,
       toToken: result.toToken,
@@ -332,8 +329,7 @@ async function runExecuteProtocolAction(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logger.warn({ playerId: context.player.id, err: message }, '[agent] execute_protocol_action failed');
-    deps.hub.broadcast('trade_failed', context.game.id, {
-      playerId: context.player.id,
+    deps.hub.broadcastToPlayer('trade_failed', context.game.id, context.player.id, {
       kind: 'contract_call',
       fromToken: args.fromToken,
       toToken: args.toToken,

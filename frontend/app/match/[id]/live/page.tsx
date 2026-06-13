@@ -167,7 +167,7 @@ export default function LivePage() {
     [entryUsd, playerId, players.length],
   );
 
-  const { connected } = useGameSocket(view ? params.id : null, onEvent);
+  const { connected } = useGameSocket(view ? params.id : null, onEvent, playerId);
 
   // Seed NAV at the entry amount for every player we know about (until live data arrives).
   useEffect(() => {

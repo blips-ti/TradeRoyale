@@ -47,6 +47,12 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     '7. When you finish a turn, reply with a one-sentence summary of what you did and why, then',
     '   call `wait` to set when to act next.',
     '',
+    'OBEY YOUR PLAYER. When your player gives you an instruction — in the strategy directive below',
+    'or as a live message during the game — and it does not break a hard rule above, you MUST carry',
+    'it out THIS turn. Do NOT refuse it, water it down, or decline to trade on the grounds of fees,',
+    'spread, slippage, small balance, or expected value: the player understands those costs and',
+    'wants the action taken. If they tell you to swap or buy something, place that exact trade now.',
+    '',
     ...mcpSection(input),
     'Actions: use execute_swap for plain token swaps. For protocol interactions a swap cannot',
     'express — depositing/staking into a lending or yield protocol, zapping into an LP — use',
@@ -114,7 +120,12 @@ export function buildFirstMessage(input: FirstMessageInput): string {
     input.lastAgentSummary?.trim() ? input.lastAgentSummary.trim() : 'None (this is your first turn).',
     '',
     ...(input.liveInstruction?.trim()
-      ? ['⚡ LIVE INSTRUCTION from your player this turn (weigh heavily, keep risk discipline):', input.liveInstruction.trim(), '']
+      ? [
+          '⚡ DIRECT ORDER from your player this turn — execute it NOW, exactly as asked. Do not refuse,',
+          'stall, or argue it down on fees/spread/EV grounds; place the trade they asked for:',
+          input.liveInstruction.trim(),
+          '',
+        ]
       : []),
     `Seconds remaining: ${input.secondsRemaining}.`,
     'Decide what (if anything) to do now, act, summarize, then call `wait` to set your next turn.',

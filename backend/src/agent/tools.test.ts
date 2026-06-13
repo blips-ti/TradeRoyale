@@ -97,6 +97,9 @@ function buildMocks(balance: string): Mocks {
   const trades = { append: vi.fn(async (trade: unknown) => void appended.push(trade)) } as unknown as TradeRepository;
   const hub = {
     broadcast: vi.fn((type: string, _gameId: string, data: Record<string, unknown>) => void broadcasts.push({ type, data })),
+    broadcastToPlayer: vi.fn((type: string, _gameId: string, playerId: string, data: Record<string, unknown>) =>
+      void broadcasts.push({ type, data: { ...data, playerId } }),
+    ),
   } as unknown as GameEventHub;
   return { executor, lifi, viem, trades, hub, appended, broadcasts };
 }

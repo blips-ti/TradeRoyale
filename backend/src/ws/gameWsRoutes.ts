@@ -14,10 +14,12 @@ export function buildGameWsRoutes(
     '/games/:gameId',
     upgradeWebSocket((c) => {
       const gameId = c.req.param('gameId');
+      // Who this socket is (from ?pid=…) — scopes private events to the player's own agent logs.
+      const playerId = c.req.query('pid') || undefined;
       return {
         onOpen: (_event, ws) => {
-          hub.subscribe(gameId, ws);
-          logger.debug({ gameId }, '[ws] subscriber connected');
+          hub.subscribe(gameId, ws, playerId);
+          logger.debug({ gameId, playerId }, '[ws] subscriber connected');
         },
         onClose: (_event, ws) => {
           hub.unsubscribe(gameId, ws);

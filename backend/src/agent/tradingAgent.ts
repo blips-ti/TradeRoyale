@@ -107,23 +107,23 @@ export class TradingAgent {
       { ...params, stream: true },
       signal ? { signal } : undefined,
     );
-    this.hub.broadcast('agent_thinking', game.id, { playerId: player.id });
+    this.hub.broadcastToPlayer('agent_thinking', game.id, player.id, {});
     let finalMessage: BetaMessage | undefined;
     for await (const stream of runner) {
       stream.on('text', (delta) => this.streamDelta(game.id, player.id, delta));
       stream.on('thinking', (delta) => this.streamDelta(game.id, player.id, delta));
       stream.on('contentBlock', (block) => {
         if (block.type === 'tool_use') {
-          this.hub.broadcast('agent_log', game.id, { playerId: player.id, kind: 'tool', tool: block.name });
+          this.hub.broadcastToPlayer('agent_log', game.id, player.id, { kind: 'tool', tool: block.name });
         }
       });
       finalMessage = await stream.finalMessage();
       // End of this assistant turn — the arena finalizes the current streaming bubble.
-      this.hub.broadcast('agent_log', game.id, { playerId: player.id, kind: 'turn_end' });
+      this.hub.broadcastToPlayer('agent_log', game.id, player.id, { kind: 'turn_end' });
     }
     if (!finalMessage) throw new Error('Agent produced no messages');
     const summary = this.extractSummary(finalMessage.content);
-    this.hub.broadcast('agent_update', game.id, { playerId: player.id, summary });
+    this.hub.broadcastToPlayer('agent_update', game.id, player.id, { summary });
     return {
       playerId: player.id,
       summary,
@@ -134,7 +134,7 @@ export class TradingAgent {
 
   // Relay a token delta of the agent's reasoning to the arena (assembled into a typing bubble).
   private streamDelta(gameId: string, playerId: string, text: string): void {
-    if (text) this.hub.broadcast('agent_log', gameId, { playerId, kind: 'reasoning_delta', text });
+    if (text) this.hub.broadcastToPlayer('agent_log', gameId, playerId, { kind: 'reasoning_delta', text });
   }
 
   private extractSummary(content: Array<{ type: string; text?: string }>): string {
