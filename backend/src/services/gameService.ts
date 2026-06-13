@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { agentRunner, AgentRunner } from "../agent/agentRunner.js";
 import { env } from "../env.js";
 import type { Game, Player, PublicPlayer, Settlement, Trade } from "../domain/types.js";
-import { toPublicPlayer } from "../domain/types.js";
+import { toOwnPlayer, toPublicPlayer } from "../domain/types.js";
 import { logger } from "../logger.js";
 import { GameRepository } from "../repositories/gameRepository.js";
 import { PlayerRepository } from "../repositories/playerRepository.js";
@@ -135,7 +135,7 @@ export class GameService {
     if (!ref) return null;
     const [game, player] = await Promise.all([this.games.get(ref.gameId), this.players.get(ref.playerId)]);
     if (!game || !player) return null;
-    return { game, player: toPublicPlayer(player) };
+    return { game, player: toOwnPlayer(player) };
   }
 
   async getPlayer(gameId: string, playerId: string): Promise<Player> {

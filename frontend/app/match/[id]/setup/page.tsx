@@ -2,18 +2,37 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowRight, Check, Cpu, Sparkles } from "lucide-react";
+import { ArrowRight, Check, Cpu, Sparkles, Wallet } from "lucide-react";
+import { useAuth } from "@/app/_lib/auth";
 import { useGame, type AgentConfig } from "@/app/_lib/store";
-import { getMatchBase, resolveMatch } from "@/app/_lib/matches";
-import { handleFor } from "@/app/_lib/format";
-import { formatDelta, useNow } from "@/app/_lib/useNow";
+import { useAchievements } from "@/app/_lib/achievementsStore";
+import { useMatchView } from "@/app/_lib/useMatchView";
+import { api } from "@/app/_lib/api";
 import { AppShell } from "@/app/_components/AppShell";
-import { BotAvatar, Button, Card, Reveal } from "@/app/_components/ui";
+import { BotAvatar, Button, Card, Reveal, Spinner } from "@/app/_components/ui";
 
-const RISKS: { key: AgentConfig["risk"]; label: string; desc: string }[] = [
-  { key: "sniper", label: "Sniper", desc: "Patient. Few, high-conviction entries." },
-  { key: "balanced", label: "Balanced", desc: "Measured risk, steady compounding." },
-  { key: "degen", label: "Degen", desc: "Max aggression. Send it." },
+const RISKS: { key: AgentConfig["risk"]; label: string; desc: string; starter: string }[] = [
+  {
+    key: "sniper",
+    label: "Sniper",
+    desc: "Patient. Few, high-conviction entries.",
+    starter:
+      "Trade patiently. Only take high-conviction setups on majors like ETH and WETH. Few positions, tight risk, cut losers fast, never chase a pump.",
+  },
+  {
+    key: "balanced",
+    label: "Balanced",
+    desc: "Measured risk, steady compounding.",
+    starter:
+      "Trade with measured risk on Base majors. Scale into confirmed trends, take profit into strength, keep position sizes moderate and protect the downside.",
+  },
+  {
+    key: "degen",
+    label: "Degen",
+    desc: "Max aggression. Send it.",
+    starter:
+      "Maximum aggression. Chase momentum, size up on breakouts, rotate fast into whatever is pumping on Base. Cut dead trades instantly and keep swinging.",
+  },
 ];
 
 const TEMPLATES = [
@@ -33,77 +52,152 @@ export default function SetupPage() {
 function Setup() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
-  const { anchorAt, joinedMatchId, agent, setAgent, init } = useGame();
-  const now = useNow(1000);
+  const { authenticated } = useAuth();
+  const { setAgent } = useGame();
+  const tryUnlock = useAchievements((s) => s.tryUnlock);
+  const { view } = useMatchView(params.id);
 
-  useEffect(() => init(), [init]);
+  // The caller's own player in this game (source of truth for name + saved strategy + funding).
+  const [me, setMe] = useState<{ playerId: string; displayName: string; confirmed: boolean } | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  const base = getMatchBase(params.id);
-  const joined = joinedMatchId === params.id;
-
-  const [name, setName] = useState(agent?.name ?? "");
-  const [risk, setRisk] = useState<AgentConfig["risk"]>(agent?.risk ?? "balanced");
-  const [prompt, setPrompt] = useState(agent?.prompt ?? "");
+  const [risk, setRisk] = useState<AgentConfig["risk"]>("balanced");
+  const [prompt, setPrompt] = useState("");
+  const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [hasStrategy, setHasStrategy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // default agent name from wallet-derived handle
   useEffect(() => {
-    if (!name && joinedMatchId) setName(`${handleFor(joinedMatchId)}-bot`);
-  }, [name, joinedMatchId]);
+    if (!authenticated) {
+      setLoading(false);
+      return;
+    }
+    let alive = true;
+    api
+      .getActive()
+      .then((res) => {
+        if (!alive) return;
+        if (res.game?.id === params.id && res.player) {
+          setMe({
+            playerId: res.player.id,
+            displayName: res.player.displayName,
+            confirmed: res.player.depositStatus === "confirmed",
+          });
+          if (res.player.strategyPrompt) {
+            setPrompt(res.player.strategyPrompt);
+            setHasStrategy(true);
+          }
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [authenticated, params.id]);
 
-  if (!base || !anchorAt || !now) return null;
-  if (!joined) {
+  if (loading) {
     return (
-      <Card className="mt-4 p-8 text-center text-muted">
-        Register for this Match first.
+      <div className="flex flex-1 items-center justify-center gap-2 text-muted">
+        <Spinner /> <span className="text-sm">Loading Agent Studio…</span>
+      </div>
+    );
+  }
+
+  if (!me) {
+    return (
+      <Card className="mt-4 flex flex-col items-center gap-3 p-8 text-center">
+        <p className="text-[14px] text-fg">Register for this Match first.</p>
+        <Button size="sm" onClick={() => router.push(`/match/${params.id}`)}>
+          Go to Match
+        </Button>
       </Card>
     );
   }
 
-  const match = resolveMatch(base, anchorAt, now);
+  if (!me.confirmed) {
+    return (
+      <Card className="mt-4 flex flex-col items-center gap-3 p-8 text-center">
+        <span className="grid h-12 w-12 place-items-center rounded-full bg-[color:var(--color-lime)]/12 text-[color:var(--color-lime)]">
+          <Wallet className="h-5 w-5" />
+        </span>
+        <p className="text-[14px] text-fg">Fund your vault to set up your agent.</p>
+        <Button size="sm" onClick={() => router.push(`/match/${params.id}`)}>
+          Complete deposit
+        </Button>
+      </Card>
+    );
+  }
 
-  const save = () => {
-    setAgent({ name: name.trim() || "Agent", risk, prompt: prompt.trim() });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1600);
+  const pickPersona = (key: AgentConfig["risk"]) => {
+    setRisk(key);
+    setPrompt(RISKS.find((r) => r.key === key)!.starter);
   };
 
-  const isReady = !!agent;
+  const save = async () => {
+    const text = prompt.trim();
+    if (!text) {
+      setError("Give your agent a strategy first.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await api.setStrategy(params.id, me.playerId, text);
+      setAgent({ name: me.displayName, risk, prompt: text });
+      tryUnlock("agent");
+      setHasStrategy(true);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1600);
+    } catch (e) {
+      setError((e as Error).message || "Couldn't save your strategy");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const live = view?.bucket === "live";
 
   return (
     <div className="flex flex-1 flex-col gap-4 pt-1">
       <Reveal>
         <div className="flex items-center gap-2 px-1">
-          <BotAvatar seed={agent?.name || params.id} size={38} />
+          <BotAvatar seed={me.displayName} size={38} />
           <div>
             <h1 className="font-display text-[22px] font-bold uppercase leading-none tracking-tight">
               Agent Studio
             </h1>
-            <p className="text-[12.5px] text-muted">{match.name} · loadout setup</p>
+            <p className="text-[12.5px] text-muted">
+              {me.displayName} · {view?.name ?? "your match"}
+            </p>
           </div>
         </div>
       </Reveal>
 
-      {/* countdown */}
+      {/* status */}
       <Reveal delay={0.04}>
         <Card className="flex items-center justify-between p-4">
-          <span className="text-[13px] text-muted">Match starts in</span>
-          <span className="font-mono text-[20px] font-bold text-[color:var(--color-lime)] tnum">
-            {formatDelta(match.startsAt - now)}
+          <span className="text-[13px] text-muted">
+            {live ? "Match is live" : "Open lobby"}
+          </span>
+          <span className="font-mono text-[13px] text-[color:var(--color-lime)]">
+            {live ? "trading now" : "goes live at the bell"}
           </span>
         </Card>
       </Reveal>
 
-      {/* agent name */}
+      {/* agent name (locked at join) */}
       <Reveal delay={0.06}>
-        <Field label="Agent name">
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Name your trader"
-            className="w-full bg-transparent font-display text-[16px] font-semibold text-fg outline-none placeholder:text-dim"
-          />
-        </Field>
+        <div className="flex flex-col gap-2">
+          <Label>Agent name</Label>
+          <Card className="flex items-center justify-between px-4 py-3.5">
+            <span className="font-display text-[16px] font-semibold text-fg">{me.displayName}</span>
+            <span className="text-[11px] text-dim">locked in</span>
+          </Card>
+        </div>
       </Reveal>
 
       {/* risk persona */}
@@ -114,7 +208,7 @@ function Setup() {
             {RISKS.map((r) => (
               <button
                 key={r.key}
-                onClick={() => setRisk(r.key)}
+                onClick={() => pickPersona(r.key)}
                 className={`rounded-card border p-3 text-left transition ${
                   risk === r.key
                     ? "border-[color:var(--color-lime)] bg-[color:var(--color-lime)]/10"
@@ -138,7 +232,7 @@ function Setup() {
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               rows={5}
-              placeholder="Tell your agent how to trade. e.g. 'Trade ETH and SOL momentum, scale in on breakouts, never risk more than 10% per position…'"
+              placeholder="Tell your agent how to trade. e.g. 'Trade ETH and WETH momentum, scale in on breakouts, never risk more than 10% per position…'"
               className="w-full resize-none bg-transparent text-[14px] leading-relaxed text-fg outline-none placeholder:text-dim"
             />
             <div className="mt-2 flex flex-wrap gap-1.5 border-t border-[color:var(--color-line)] pt-3">
@@ -167,34 +261,30 @@ function Setup() {
 
       <Reveal delay={0.14}>
         <div className="flex flex-col gap-2">
-          <Button fullWidth variant={isReady ? "dark" : "lime"} onClick={save}>
-            {saved ? (
+          {error && <p className="text-center text-[12.5px] text-[color:var(--color-loss)]">{error}</p>}
+          <Button fullWidth variant={hasStrategy ? "dark" : "lime"} onClick={save} disabled={saving}>
+            {saving ? (
+              <>
+                <Spinner /> Saving…
+              </>
+            ) : saved ? (
               <>
                 <Check className="h-4 w-4 text-[color:var(--color-profit)]" /> Saved
               </>
-            ) : isReady ? (
+            ) : hasStrategy ? (
               "Update agent"
             ) : (
               "Lock in agent"
             )}
           </Button>
-          {isReady && (
-            <Button fullWidth onClick={() => router.push(`/match/${match.id}/live`)}>
-              {match.status === "live" ? "Enter The Arena" : "Preview The Arena"}
+          {hasStrategy && (
+            <Button fullWidth onClick={() => router.push(`/match/${params.id}/live`)}>
+              {live ? "Enter The Arena" : "Preview The Arena"}
               <ArrowRight className="h-4 w-4" />
             </Button>
           )}
         </div>
       </Reveal>
-    </div>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex flex-col gap-2">
-      <Label>{label}</Label>
-      <Card className="px-4 py-3.5">{children}</Card>
     </div>
   );
 }

@@ -104,6 +104,9 @@ export interface PublicPlayer {
   privyWalletAddress?: string;
   fundsStatus?: FundsStatus;
   lastAgentSummary?: string;
+  // Populated ONLY on the owner's own-player views (GET /games/me, strategy PUT) so they can
+  // prefill Agent Studio. Never set by toPublicPlayer, so opponents can't read your strategy.
+  strategyPrompt?: string;
 }
 
 export function toPublicPlayer(player: Player): PublicPlayer {
@@ -116,4 +119,9 @@ export function toPublicPlayer(player: Player): PublicPlayer {
     fundsStatus: player.fundsStatus,
     lastAgentSummary: player.lastAgentSummary,
   };
+}
+
+// The owner's view of their OWN player — adds their private strategy for prefill.
+export function toOwnPlayer(player: Player): PublicPlayer {
+  return { ...toPublicPlayer(player), strategyPrompt: player.strategyPrompt };
 }

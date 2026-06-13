@@ -2,7 +2,7 @@ import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 
 import { env } from "../env.js";
-import { toPublicPlayer } from "../domain/types.js";
+import { toOwnPlayer, toPublicPlayer } from "../domain/types.js";
 import { requireAuth, type AuthVariables } from "../middleware/auth.js";
 import {
   ForbiddenError,
@@ -81,7 +81,7 @@ export function buildGameRoutes(
         strategyPrompt: body.strategyPrompt,
         ownerId: c.get("userId"),
       });
-      return c.json({ player: toPublicPlayer(player) });
+      return c.json({ player: toOwnPlayer(player) });
     },
   );
 

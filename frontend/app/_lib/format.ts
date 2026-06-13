@@ -15,7 +15,14 @@ export function initialsOf(name: string) {
 }
 
 export function usd(n: number) {
-  return n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+  // Whole dollars stay clean ($20); fractional amounts keep cents so $0.10 never shows as $0.
+  const digits = Number.isInteger(n) ? 0 : 2;
+  return n.toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
 }
 
 /** Deterministic, friendly trader handle derived from a wallet address / id. */

@@ -27,6 +27,7 @@ export type PublicPlayer = {
   privyWalletAddress?: string;
   fundsStatus?: FundsStatus;
   lastAgentSummary?: string;
+  strategyPrompt?: string; // present only on the owner's own player (GET /games/me, strategy PUT)
 };
 
 export type GameWithPlayers = { game: Game; players: PublicPlayer[] };
