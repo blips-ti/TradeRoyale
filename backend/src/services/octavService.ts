@@ -98,14 +98,15 @@ export class OctavService {
     return { navUsd: this.normalizeNav(body.nav), raw: body };
   }
 
-  // GET /v1/wallet?addresses=<address>&includeImages=true — wallet token balances only (no DeFi
-  // positions), with logos. Unlike /portfolio there is NO ~1min server-side cache, so it reflects
-  // the wallet's current state immediately — used by the live sampler and end-of-game scoring.
+  // GET /v1/wallet?addresses=<address> — wallet token balances only (no DeFi positions). It
+  // returns logos (imgSmall/imgLarge) by DEFAULT and REJECTS the /portfolio-style includeImages
+  // param with a 400. Unlike /portfolio there is no ~1min cache, so it reflects the wallet's
+  // current state immediately — used by the live sampler, the wallet-panel poll, and scoring.
   async getWallet(address: string): Promise<PortfolioResult> {
     if (!this.apiKey) {
       throw new MissingOctavCredentialsError("OCTAV_API_KEY is not set");
     }
-    const params = new URLSearchParams({ addresses: address, includeImages: "true" });
+    const params = new URLSearchParams({ addresses: address });
     let response: Response;
     try {
       response = await fetch(`${this.baseUrl}/wallet?${params.toString()}`, {

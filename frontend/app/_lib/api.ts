@@ -5,6 +5,7 @@ import type {
   ActivePlayerResponse,
   Game,
   GameWithPlayers,
+  Holding,
   JoinResult,
   PlayerDetail,
   LeaderboardEntry,
@@ -76,6 +77,10 @@ export const api = {
     req<{ account: UnlinkAccountExport }>(
       `/games/${gameId}/players/${playerId}/unlink-account`,
     ).then((r) => r.account),
+
+  // Owner-only: the caller's live trading-wallet holdings (Octav /wallet), polled by the arena.
+  getWallet: (gameId: string, playerId: string) =>
+    req<{ navUsd: string; holdings: Holding[] }>(`/games/${gameId}/players/${playerId}/wallet`),
 
   getTrades: (gameId: string) => req<{ trades: Trade[] }>(`/games/${gameId}/trades`).then((r) => r.trades),
 

@@ -219,6 +219,30 @@ export default function LivePage() {
     };
   }, [bell, settled, params.id, entryUsd]);
 
+  // Poll our own wallet holdings every 30s (Octav /wallet) so the wallet panel stays fresh even
+  // if a WS portfolio_update is missed. Owner-authed; runs only while the match is live.
+  useEffect(() => {
+    if (!playerId || view?.bucket !== "live") return;
+    let alive = true;
+    const pull = () => {
+      api
+        .getWallet(params.id, playerId)
+        .then((w) => {
+          if (!alive || !Array.isArray(w.holdings) || w.holdings.length === 0) return;
+          setHoldings(w.holdings);
+          const nav = Number(w.navUsd);
+          if (Number.isFinite(nav)) setNavByPlayer((prev) => ({ ...prev, [playerId]: nav }));
+        })
+        .catch(() => {});
+    };
+    pull();
+    const t = setInterval(pull, 30_000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [playerId, view?.bucket, params.id]);
+
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, thinking, streamText]);

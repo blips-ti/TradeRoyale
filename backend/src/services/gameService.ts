@@ -12,6 +12,7 @@ import { PlayerRepository } from "../repositories/playerRepository.js";
 import { SettlementRepository } from "../repositories/settlementRepository.js";
 import { TradeRepository } from "../repositories/tradeRepository.js";
 import { gameEventHub, GameEventHub } from "../ws/gameEventHub.js";
+import { type Holding, octavService, OctavService } from "./octavService.js";
 import { privyService, PrivyService } from "./privyService.js";
 import { unlinkService, UnlinkService, type AccountExportPayload } from "./unlinkService.js";
 
@@ -94,6 +95,7 @@ export class GameService {
     private readonly runner: AgentRunner = agentRunner,
     private readonly privy: PrivyService = privyService,
     private readonly settlements: SettlementRepository = new SettlementRepository(),
+    private readonly octav: OctavService = octavService,
   ) {}
 
   async createGame(input: CreateGameInput): Promise<Game> {
@@ -187,6 +189,26 @@ export class GameService {
       unlinkAddress: player.unlinkAddress,
       encMnemonic: player.encMnemonic,
     });
+  }
+
+  // Owner-only: the player's live trading-wallet holdings from Octav /wallet, so the arena can
+  // poll its own wallet panel every 30s (independent of the WS push). Empty before the wallet
+  // exists; never throws on an Octav hiccup — returns an empty list so the panel just holds.
+  async getPlayerWallet(
+    gameId: string,
+    playerId: string,
+    ownerId: string,
+  ): Promise<{ navUsd: string; holdings: Holding[] }> {
+    const player = await this.getPlayer(gameId, playerId);
+    this.assertOwner(player, ownerId);
+    if (!player.privyWalletAddress) return { navUsd: "0", holdings: [] };
+    try {
+      const { navUsd, holdings } = await this.octav.getWallet(player.privyWalletAddress);
+      return { navUsd, holdings };
+    } catch (error) {
+      logger.warn({ err: error, gameId, playerId }, "[gameService] octav wallet fetch failed");
+      return { navUsd: "0", holdings: [] };
+    }
   }
 
   // Strategy is editable only while the game is still in the lobby — once live, the prompt

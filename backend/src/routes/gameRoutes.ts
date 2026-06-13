@@ -136,6 +136,17 @@ export function buildGameRoutes(
     return c.json({ account });
   });
 
+  // Owner-only: the caller's own live wallet holdings (Octav /wallet) for the arena wallet panel,
+  // polled every ~30s. More specific than "/:playerId", so declared before it.
+  router.get("/:gameId/players/:playerId/wallet", requireAuth(), async (c) => {
+    const wallet = await service.getPlayerWallet(
+      c.req.param("gameId"),
+      c.req.param("playerId"),
+      c.get("userId"),
+    );
+    return c.json(wallet);
+  });
+
   router.get("/:gameId/players/:playerId", async (c) => {
     const gameId = c.req.param("gameId");
     const playerId = c.req.param("playerId");
