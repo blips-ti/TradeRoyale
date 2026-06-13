@@ -1,6 +1,7 @@
 /* Typed REST client for the trade-royal-backend. */
 
 import type {
+  ActivePlayerResponse,
   Game,
   GameWithPlayers,
   JoinResult,
@@ -39,7 +40,10 @@ export const api = {
 
   getGame: (gameId: string) => req<GameWithPlayers>(`/games/${gameId}`),
 
-  joinGame: (gameId: string, body: { displayName: string; strategyPrompt?: string }) =>
+  // Recover the user's active game + player by wallet address (reconnect / new device).
+  getActive: (ownerAddress: string) => req<ActivePlayerResponse>(`/games/me/${ownerAddress}`),
+
+  joinGame: (gameId: string, body: { displayName: string; strategyPrompt?: string; ownerAddress?: string }) =>
     req<JoinResult>(`/games/${gameId}/join`, { method: "POST", body: JSON.stringify(body) }),
 
   setStrategy: (gameId: string, playerId: string, strategyPrompt: string) =>

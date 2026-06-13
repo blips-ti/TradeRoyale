@@ -12,13 +12,17 @@ export type AgentConfig = {
 type GameState = {
   /** session anchor for relative match timing (reset if stale) */
   anchorAt: number | null;
-  /** the single match the user is in (one at a time, cannot leave) */
+  /** the single match/game the user is in (one at a time, cannot leave) */
   joinedMatchId: string | null;
+  /** the backend playerId for the joined game (recovered on reconnect) */
+  playerId: string | null;
   /** the user's agent setup for their match */
   agent: AgentConfig | null;
 
   init: () => void;
   join: (matchId: string) => void;
+  /** set the real backend session after join / on reconnect rehydrate */
+  setSession: (gameId: string, playerId: string) => void;
   setAgent: (agent: AgentConfig) => void;
   /** dev/round reset — used after a match ends */
   reset: () => void;
@@ -31,6 +35,7 @@ export const useGame = create<GameState>()(
     (set, get) => ({
       anchorAt: null,
       joinedMatchId: null,
+      playerId: null,
       agent: null,
 
       init: () => {
@@ -44,13 +49,20 @@ export const useGame = create<GameState>()(
         set({ joinedMatchId: matchId });
       },
 
+      setSession: (gameId, playerId) => set({ joinedMatchId: gameId, playerId }),
+
       setAgent: (agent) => set({ agent }),
 
-      reset: () => set({ joinedMatchId: null, agent: null }),
+      reset: () => set({ joinedMatchId: null, playerId: null, agent: null }),
     }),
     {
       name: "alphaarena.game",
-      partialize: (s) => ({ anchorAt: s.anchorAt, joinedMatchId: s.joinedMatchId, agent: s.agent }),
+      partialize: (s) => ({
+        anchorAt: s.anchorAt,
+        joinedMatchId: s.joinedMatchId,
+        playerId: s.playerId,
+        agent: s.agent,
+      }),
     },
   ),
 );

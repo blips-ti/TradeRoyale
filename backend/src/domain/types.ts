@@ -25,6 +25,9 @@ export interface Player {
   depositStatus: DepositStatus;
   startingBalance?: string;
   createdAt: string;
+  // Lowercased wallet address of the user who joined (their Privy identity). Lets a
+  // returning user recover this player; never exposed in PublicPlayer.
+  ownerAddress?: string;
   // Untrusted user-supplied strategy directive for the Claude trading agent.
   strategyPrompt?: string;
   // Privy server wallet that trades publicly on Base (created at join).

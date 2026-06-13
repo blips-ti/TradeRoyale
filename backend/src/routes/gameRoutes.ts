@@ -39,6 +39,13 @@ export function buildGameRoutes(
     return c.json({ games });
   });
 
+  // Recover the caller's active game + player by wallet address (reconnect / new device).
+  // Static "/me" is matched before the "/:gameId" param route.
+  router.get("/me/:ownerAddress", async (c) => {
+    const active = await service.getActiveForOwner(c.req.param("ownerAddress"));
+    return c.json(active ?? { game: null, player: null });
+  });
+
   router.get("/:gameId", async (c) => {
     const result = await service.getGameWithPlayers(c.req.param("gameId"));
     return c.json(result);
@@ -53,6 +60,7 @@ export function buildGameRoutes(
         gameId: c.req.param("gameId"),
         displayName: body.displayName,
         strategyPrompt: body.strategyPrompt,
+        ownerAddress: body.ownerAddress,
       });
       return c.json(result, 201);
     },

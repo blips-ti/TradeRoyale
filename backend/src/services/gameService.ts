@@ -28,6 +28,13 @@ export interface JoinGameInput {
   gameId: string;
   displayName: string;
   strategyPrompt?: string;
+  // The joining user's wallet address — links the player to their identity for reconnect.
+  ownerAddress?: string;
+}
+
+export interface ActivePlayer {
+  game: Game;
+  player: PublicPlayer;
 }
 
 export interface SetStrategyInput {
@@ -119,6 +126,15 @@ export class GameService {
     return { game, players: players.map(toPublicPlayer) };
   }
 
+  // The user's current game + player (recover a session by wallet address), or null.
+  async getActiveForOwner(ownerAddress: string): Promise<ActivePlayer | null> {
+    const ref = await this.players.getActiveForOwner(ownerAddress.toLowerCase());
+    if (!ref) return null;
+    const [game, player] = await Promise.all([this.games.get(ref.gameId), this.players.get(ref.playerId)]);
+    if (!game || !player) return null;
+    return { game, player: toPublicPlayer(player) };
+  }
+
   async getPlayer(gameId: string, playerId: string): Promise<Player> {
     const player = await this.players.get(playerId);
     if (!player || player.gameId !== gameId) {
@@ -165,6 +181,7 @@ export class GameService {
     const gameAccount = await this.unlink.createGameAccount();
     // Entry custody stays in Unlink; the Privy wallet is the public Base trading wallet.
     const wallet = await this.privy.createPlayerWallet();
+    const ownerAddress = input.ownerAddress?.toLowerCase();
     const player: Player = {
       id: randomUUID(),
       gameId: game.id,
@@ -173,6 +190,7 @@ export class GameService {
       encMnemonic: gameAccount.encMnemonic,
       depositStatus: "pending",
       createdAt: new Date().toISOString(),
+      ownerAddress,
       strategyPrompt: input.strategyPrompt,
       privyWalletId: wallet.walletId,
       privyWalletAddress: wallet.address,
@@ -180,6 +198,9 @@ export class GameService {
     };
     await this.players.save(player);
     await this.games.addPlayer(game.id, player.id);
+    if (ownerAddress) {
+      await this.players.setActiveForOwner(ownerAddress, { gameId: game.id, playerId: player.id });
+    }
     this.hub.broadcast("player_joined", game.id, {
       player: toPublicPlayer(player),
     });

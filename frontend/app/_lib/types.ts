@@ -31,6 +31,9 @@ export type PublicPlayer = {
 
 export type GameWithPlayers = { game: Game; players: PublicPlayer[] };
 
+/** GET /games/me/:ownerAddress — the caller's active game+player, recovered on reconnect. */
+export type ActivePlayerResponse = { game: Game | null; player: PublicPlayer | null };
+
 export type JoinResult = {
   playerId: string;
   unlinkAddress: string;

@@ -6,6 +6,7 @@ import Link from "next/link";
 import { ArrowRight, Menu, Wallet, Zap } from "lucide-react";
 import { useAuth } from "@/app/_lib/auth";
 import { useGame } from "@/app/_lib/store";
+import { useSessionSync } from "@/app/_lib/useSessionSync";
 import { getMatchBase, resolveMatch } from "@/app/_lib/matches";
 import { formatDelta, useNow } from "@/app/_lib/useNow";
 import { Logo } from "./Logo";
@@ -21,6 +22,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const now = useNow(1000);
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+
+  // Recover the user's active game/player from the backend on (re)connect.
+  useSessionSync(user?.address);
 
   useEffect(() => {
     init();
