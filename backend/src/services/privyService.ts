@@ -145,10 +145,14 @@ export class PrivyService {
       if (this.isFailedStatus(tx.status)) {
         throw new Error(`Privy sponsored tx ${transactionId} ${tx.status} (wallet ${walletId})`);
       }
-      if (this.isBroadcastedStatus(tx.status) && tx.transaction_hash) return tx.transaction_hash;
+      if (this.isBroadcastedStatus(tx.status) && tx.transaction_hash) {
+        logger.info({ walletId, transactionId, status: tx.status }, '[privy] sponsored tx resolved');
+        return tx.transaction_hash;
+      }
       await this.sleep(Math.min(interval, deadline - Date.now()));
       interval = Math.min(interval * 2, POLL_MAX_INTERVAL_MS);
     }
+    logger.info({ walletId, transactionId, status: 'timeout' }, '[privy] sponsored tx polling timed out');
     throw new Error(`Privy sponsored tx ${transactionId} not confirmed in time`);
   }
 
@@ -210,6 +214,12 @@ export class PrivyService {
           'wallet_client' in account &&
           account.wallet_client === EXTERNAL_ETHEREUM_WALLET,
       );
+      // wallet_client values only (never addresses of unrelated accounts) so we can debug why
+      // the depositor resolves null without leaking linked-wallet PII.
+      const walletClients = user.linked_accounts
+        .filter((account) => account.type === 'wallet' && 'wallet_client' in account)
+        .map((account) => ('wallet_client' in account ? account.wallet_client : null));
+      logger.info({ ownerId, walletClients, externalMatch: !!external }, '[privy] resolveDepositorAddress linked accounts');
       if (external && 'address' in external) return external.address;
       return null;
     } catch (error) {

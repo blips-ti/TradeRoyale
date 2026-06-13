@@ -72,9 +72,13 @@ export class SettlementService {
     const balances = await this.viem.getErc20BalancesForOwners(this.entryToken, addresses);
     const winner = this.pickWinner(players, balances);
     if (!winner?.privyWalletAddress) return this.noWinner(settlement);
+    logger.info(
+      { gameId: settlement.gameId, winnerPlayerId: winner.id, winnerAddress: winner.privyWalletAddress, prizePoolUsdc: settlement.prizePoolUsdc },
+      "[settlement] winner determined",
+    );
 
     const losers = players.filter((player) => player.id !== winner.id);
-    const transfers = await this.transferAll(losers, winner.privyWalletAddress, balances);
+    const transfers = await this.transferAll(settlement.gameId, losers, winner.id, winner.privyWalletAddress, balances);
     const payoutStatus = this.deriveStatus(transfers);
 
     this.hub.broadcast("prize_paid", settlement.gameId, {
@@ -114,6 +118,7 @@ export class SettlementService {
       return this.recordShield(gameId, winner, { amount: "0", phase: "consolidated" });
     }
     const amount = await this.viem.getErc20Balance(this.entryToken, winner.privyWalletAddress!);
+    logger.info({ gameId, winnerPlayerId: winner.id, amount }, "[settlement] shield pot read");
     if (new BigNumber(amount).lte(0)) {
       return this.recordShield(gameId, winner, { amount, phase: "consolidated" });
     }
@@ -123,6 +128,10 @@ export class SettlementService {
   }
 
   private async depositToUnlink(gameId: string, winner: Player, amount: string): Promise<ShieldResult> {
+    logger.info(
+      { gameId, winnerPlayerId: winner.id, amount, unlinkAddress: winner.unlinkAddress },
+      "[settlement] shield deposit-to-Unlink attempt",
+    );
     try {
       await this.unlink.depositFromPrivyWallet({
         unlinkAddress: winner.unlinkAddress,
@@ -132,10 +141,13 @@ export class SettlementService {
         token: this.entryToken,
         amount,
       });
+      logger.info({ gameId, winnerPlayerId: winner.id, amount, unlinkAddress: winner.unlinkAddress }, "[settlement] shield deposit-to-Unlink confirmed");
       return this.recordShield(gameId, winner, { amount, phase: "deposited" });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      logger.error({ gameId, winnerPlayerId: winner.id, err: message }, "[settlement] shield deposit failed");
+      // Pass the raw error as `err` (serializer renders the full Permit2/SDK detail) — the whole
+      // point of this path's logging; `message` only feeds the persisted ShieldResult.error.
+      logger.error({ err: error, gameId, winnerPlayerId: winner.id, amount }, "[settlement] shield deposit failed");
       return this.recordShield(gameId, winner, { amount, phase: "deposit_failed", error: message });
     }
   }
@@ -143,9 +155,13 @@ export class SettlementService {
   private async withdrawToDepositor(gameId: string, winner: Player, amount: string): Promise<ShieldResult> {
     const destination = winner.ownerId ? await this.privy.resolveDepositorAddress(winner.ownerId) : null;
     if (!destination) {
-      logger.warn({ gameId, winnerPlayerId: winner.id }, "[settlement] no depositor wallet; pot stays in Unlink");
+      logger.warn({ gameId, winnerPlayerId: winner.id, ownerId: winner.ownerId ?? null }, "[settlement] no depositor wallet resolved; pot stays in Unlink");
       return this.recordShield(gameId, winner, { amount, phase: "no_destination" });
     }
+    logger.info(
+      { gameId, winnerPlayerId: winner.id, amount, finalDestination: destination },
+      "[settlement] shield withdraw-to-depositor attempt",
+    );
     try {
       await this.unlink.withdrawToAddress({
         playerId: winner.id,
@@ -155,10 +171,11 @@ export class SettlementService {
         token: this.entryToken,
         amount,
       });
+      logger.info({ gameId, winnerPlayerId: winner.id, amount, finalDestination: destination }, "[settlement] shield withdraw-to-depositor confirmed");
       return this.recordShield(gameId, winner, { amount, phase: "withdrawn", finalDestination: destination });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      logger.error({ gameId, winnerPlayerId: winner.id, err: message }, "[settlement] shield withdrawal failed");
+      logger.error({ err: error, gameId, winnerPlayerId: winner.id, amount, finalDestination: destination }, "[settlement] shield withdrawal failed");
       return this.recordShield(gameId, winner, { amount, phase: "withdraw_failed", finalDestination: destination, error: message });
     }
   }
@@ -171,6 +188,10 @@ export class SettlementService {
     fields: { amount: string; phase: ShieldPhase; finalDestination?: string; error?: string },
   ): ShieldResult {
     const shield: ShieldResult = { winnerPlayerId: winner.id, ...fields };
+    logger.info(
+      { gameId, winnerPlayerId: winner.id, phase: shield.phase, amount: shield.amount, finalDestination: shield.finalDestination ?? null },
+      "[settlement] shield result",
+    );
     this.hub.broadcast("prize_settled", gameId, {
       winnerPlayerId: winner.id,
       amount: shield.amount,
@@ -201,7 +222,9 @@ export class SettlementService {
   // Only losers with a positive USDC balance get a transfer; zero-balance wallets are skipped
   // entirely (no send, no record). Each transfer is isolated so one failure never blocks the rest.
   private async transferAll(
+    gameId: string,
     losers: Player[],
+    winnerPlayerId: string,
     winnerAddress: string,
     balances: Record<string, string>,
   ): Promise<PayoutTransfer[]> {
@@ -209,7 +232,9 @@ export class SettlementService {
     const settled = await Promise.allSettled(
       funded.map((loser) => this.transferOne(loser, winnerAddress, this.balanceOf(loser, balances))),
     );
-    return settled.map((result, index) => this.toTransfer(funded[index]!, this.balanceOf(funded[index]!, balances), result));
+    return settled.map((result, index) =>
+      this.toTransfer(gameId, winnerPlayerId, funded[index]!, this.balanceOf(funded[index]!, balances), result),
+    );
   }
 
   // Moves a single loser's FULL USDC balance into the winner via a sponsored erc20 transfer.
@@ -230,10 +255,24 @@ export class SettlementService {
     return hash;
   }
 
-  private toTransfer(loser: Player, amount: string, result: PromiseSettledResult<string>): PayoutTransfer {
-    if (result.status === "fulfilled") return { playerId: loser.id, amount, txHash: result.value, ok: true };
-    const message = result.reason instanceof Error ? result.reason.message : String(result.reason);
-    logger.error({ playerId: loser.id, err: message }, "[settlement] loser transfer failed");
+  private toTransfer(
+    gameId: string,
+    winnerPlayerId: string,
+    loser: Player,
+    amount: string,
+    result: PromiseSettledResult<string>,
+  ): PayoutTransfer {
+    if (result.status === "fulfilled") {
+      logger.info(
+        { gameId, fromPlayerId: loser.id, winnerPlayerId, amount, txHash: result.value },
+        "[settlement] loser transfer confirmed",
+      );
+      return { playerId: loser.id, amount, txHash: result.value, ok: true };
+    }
+    logger.error(
+      { err: result.reason, gameId, fromPlayerId: loser.id, winnerPlayerId, amount },
+      "[settlement] loser transfer failed",
+    );
     return { playerId: loser.id, amount, ok: false };
   }
 
