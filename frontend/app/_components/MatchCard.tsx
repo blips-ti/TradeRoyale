@@ -33,7 +33,7 @@ export function MatchCard({
 
   return (
     <Link href={`/match/${match.id}`} className="block transition active:scale-[0.99]">
-      <Card className={`p-5 ${live ? "live-card border-[color:var(--color-loss)]/50" : ""}`}>
+      <Card className={`p-5 ${live ? "live-card border-[color:var(--color-loss)]/50" : ""} ${ended ? "opacity-60" : ""}`}>
         {/* header: logo + title + tags */}
         <div className="flex items-start gap-3">
           <MatchLogo seed={match.name} size={featured ? 56 : 50} />
@@ -73,7 +73,11 @@ export function MatchCard({
               </span>
             )}
           </span>
-          {youreIn ? (
+          {ended ? (
+            <span className="inline-flex items-center gap-1.5 rounded-pill bg-[color:var(--color-surface-2)] px-3 py-1.5 text-[12.5px] font-semibold uppercase tracking-wide text-dim">
+              Ended
+            </span>
+          ) : youreIn ? (
             <Status kind="registered" />
           ) : lockedOut ? (
             <span className="inline-flex items-center gap-1.5 rounded-pill bg-[color:var(--color-surface-2)] px-3 py-1.5 text-[12.5px] font-medium text-dim">

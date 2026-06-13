@@ -80,6 +80,7 @@ export class GameClock {
     }
     await this.games.save({ ...game, status: 'ended' });
     await this.games.removeFromLiveIndex(game.id);
+    await this.games.addToEndedIndex(game.id);
     this.hub.broadcast('game_ended', game.id, { results });
     logger.info({ gameId: game.id, players: results.length }, '[gameClock] game ended');
   }

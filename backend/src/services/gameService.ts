@@ -116,8 +116,12 @@ export class GameService {
   private async gamesForStatus(status: GameListStatus): Promise<Game[]> {
     if (status === "live") return this.games.listLive();
     if (status === "all") {
-      const [open, live] = await Promise.all([this.games.listOpen(), this.games.listLive()]);
-      return [...open, ...live];
+      const [open, live, ended] = await Promise.all([
+        this.games.listOpen(),
+        this.games.listLive(),
+        this.games.listEnded(),
+      ]);
+      return [...open, ...live, ...ended];
     }
     return this.games.listOpen();
   }

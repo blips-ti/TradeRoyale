@@ -12,4 +12,5 @@ export const RedisKeys = {
   achievements: (ownerAddress: string): string => `tr:owner:${ownerAddress}:achievements`,
   openGames: (): string => 'tr:games:open',
   liveGames: (): string => 'tr:games:live',
+  endedGames: (): string => 'tr:games:ended',
 } as const;

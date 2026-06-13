@@ -3,15 +3,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowRight, Check, Clock, Lock, ShieldCheck, Users, Wallet, WifiOff, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Clock, Crown, Lock, ShieldCheck, Trophy, Users, Wallet, WifiOff, X } from "lucide-react";
 import { useWallets } from "@privy-io/react-auth";
 import { useAuth } from "@/app/_lib/auth";
 import { useGame } from "@/app/_lib/store";
 import { api } from "@/app/_lib/api";
 import { depositEntry, type DepositPhase } from "@/app/_lib/unlinkDeposit";
-import type { Game, PublicPlayer } from "@/app/_lib/types";
+import type { Game, PlayerResult, PublicPlayer } from "@/app/_lib/types";
 import { bannerSeedFor, gameName } from "@/app/_lib/gameView";
-import { bucketOf, formatUsd, livePoolBaseUnits } from "@/app/_lib/units";
+import { baseUnitsToNumber, bucketOf, formatUsd, livePoolBaseUnits } from "@/app/_lib/units";
 import { formatDelta, useNow } from "@/app/_lib/useNow";
 import { AppShell } from "@/app/_components/AppShell";
 import { MatchBanner } from "@/app/_components/MatchBanner";
@@ -29,7 +29,7 @@ function MatchDetail() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const { authenticated, user, login } = useAuth();
-  const { joinedMatchId, setSession } = useGame();
+  const { joinedMatchId, setSession, reset } = useGame();
   const now = useNow(1000);
 
   const [game, setGame] = useState<Game | null>(null);
@@ -62,6 +62,16 @@ function MatchDetail() {
     const t = setInterval(reloadMine, 4000);
     return () => clearInterval(t);
   }, [reloadMine]);
+
+  // Final settled results, fetched once the game has ended (drives the winners section).
+  const [results, setResults] = useState<PlayerResult[] | null>(null);
+  useEffect(() => {
+    if (game?.status !== "ended") return;
+    api
+      .getResults(params.id)
+      .then((s) => setResults(s?.perPlayer ?? []))
+      .catch(() => {});
+  }, [game?.status, params.id]);
 
   // Fetch + light poll the game.
   useEffect(() => {
@@ -156,6 +166,59 @@ function MatchDetail() {
         </Card>
       </Reveal>
 
+      {/* final results (ended games) */}
+      {bucket === "ended" && (
+        <Reveal delay={0.1}>
+          <Card className="p-5">
+            <h3 className="flex items-center gap-2 font-display text-[14px] font-semibold uppercase tracking-wide text-fg">
+              <Trophy className="h-4 w-4 text-[color:var(--color-lime)]" /> Final results
+            </h3>
+            <div className="mt-3 space-y-2">
+              {results === null ? (
+                <p className="text-[13px] text-muted">Loading results…</p>
+              ) : results.length === 0 ? (
+                <p className="text-[13px] text-muted">Results are being settled…</p>
+              ) : (
+                [...results]
+                  .sort((a, b) => a.rank - b.rank)
+                  .map((r) => {
+                    const pnlNum = baseUnitsToNumber(r.pnl);
+                    const absPnl = r.pnl.startsWith("-") ? r.pnl.slice(1) : r.pnl;
+                    const isMine = r.playerId === mine?.playerId;
+                    return (
+                      <div
+                        key={r.playerId}
+                        className={`flex items-center gap-3 rounded-card border px-3 py-2.5 ${
+                          isMine
+                            ? "border-[color:var(--color-lime)]/50 bg-[color:var(--color-lime)]/10"
+                            : "border-[color:var(--color-line)] bg-[color:var(--color-surface)]"
+                        }`}
+                      >
+                        <span className="w-5 text-center font-mono text-[13px] font-bold text-muted">{r.rank}</span>
+                        <Avatar name={isMine ? "You" : r.displayName} size={28} />
+                        <span className="min-w-0 flex-1 truncate text-[13.5px] font-semibold text-fg">
+                          {isMine ? "You" : r.displayName}
+                          {r.rank === 1 && <Crown className="ml-1 inline h-3.5 w-3.5 text-[color:var(--color-lime)]" />}
+                        </span>
+                        <div className="text-right">
+                          <p className="font-display text-[14px] font-bold tnum">{formatUsd(r.finalUsdc, undefined, true)}</p>
+                          <p
+                            className="font-mono text-[11px]"
+                            style={{ color: pnlNum >= 0 ? "var(--color-profit)" : "var(--color-loss)" }}
+                          >
+                            {pnlNum >= 0 ? "+" : "−"}
+                            {formatUsd(absPnl, undefined, true)}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })
+              )}
+            </div>
+          </Card>
+        </Reveal>
+      )}
+
       {/* briefing + players */}
       <Reveal delay={0.1}>
         <Card className="p-5">
@@ -188,7 +251,18 @@ function MatchDetail() {
 
       {/* CTA */}
       <Reveal delay={0.14}>
-        {!authenticated ? (
+        {bucket === "ended" ? (
+          <Button
+            variant="dark"
+            fullWidth
+            onClick={() => {
+              if (mine) reset(); // release the session for the match you just played
+              router.push("/dashboard");
+            }}
+          >
+            <ArrowLeft className="h-4 w-4" /> Back to matches
+          </Button>
+        ) : !authenticated ? (
           bucket === "ongoing" ? (
             <Button fullWidth onClick={login}>
               <Wallet className="h-4 w-4" /> Connect wallet to join

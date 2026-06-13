@@ -49,6 +49,16 @@ export class GameRepository {
     return games.filter((game): game is Game => game !== null);
   }
 
+  async addToEndedIndex(gameId: string): Promise<void> {
+    await this.redis.sadd(RedisKeys.endedGames(), gameId);
+  }
+
+  async listEnded(): Promise<Game[]> {
+    const ids = await this.redis.smembers(RedisKeys.endedGames());
+    const games = await Promise.all(ids.map((id) => this.get(id)));
+    return games.filter((game): game is Game => game !== null);
+  }
+
   async addPlayer(gameId: string, playerId: string): Promise<void> {
     await this.redis.sadd(RedisKeys.gamePlayers(gameId), playerId);
   }

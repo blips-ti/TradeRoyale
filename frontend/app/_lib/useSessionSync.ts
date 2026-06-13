@@ -27,8 +27,14 @@ export function useSessionSync(userId: string | null) {
       .getActive()
       .then((res) => {
         if (!alive) return;
-        const confirmed = res.game && res.player && res.player.depositStatus === "confirmed";
-        if (confirmed) setSession(res.game!.id, res.player!.id);
+        // Active = confirmed deposit in a game that hasn't ended. Ended games must release the
+        // session so the player isn't locked out of joining the next match.
+        const active =
+          res.game &&
+          res.player &&
+          res.player.depositStatus === "confirmed" &&
+          res.game.status !== "ended";
+        if (active) setSession(res.game!.id, res.player!.id);
         else reset();
       })
       .catch(() => {});
