@@ -27,6 +27,7 @@ export type PublicPlayer = {
   privyWalletAddress?: string;
   fundsStatus?: FundsStatus;
   lastAgentSummary?: string;
+  agentReady?: boolean; // deposit confirmed AND agent set up — drives the lobby "ready" count
   strategyPrompt?: string; // present only on the owner's own player (GET /games/me, strategy PUT)
 };
 

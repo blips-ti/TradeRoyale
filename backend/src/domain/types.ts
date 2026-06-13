@@ -107,9 +107,16 @@ export interface PublicPlayer {
   privyWalletAddress?: string;
   fundsStatus?: FundsStatus;
   lastAgentSummary?: string;
+  // Deposit confirmed AND a strategy set — i.e. the player is fully ready for the match to start.
+  // Public boolean (no strategy content), so the lobby can show a live "ready" count.
+  agentReady?: boolean;
   // Populated ONLY on the owner's own-player views (GET /games/me, strategy PUT) so they can
   // prefill Agent Studio. Never set by toPublicPlayer, so opponents can't read your strategy.
   strategyPrompt?: string;
+}
+
+export function isAgentReady(player: Player): boolean {
+  return player.depositStatus === 'confirmed' && !!player.strategyPrompt?.trim();
 }
 
 export function toPublicPlayer(player: Player): PublicPlayer {
@@ -121,6 +128,7 @@ export function toPublicPlayer(player: Player): PublicPlayer {
     privyWalletAddress: player.privyWalletAddress,
     fundsStatus: player.fundsStatus,
     lastAgentSummary: player.lastAgentSummary,
+    agentReady: isAgentReady(player),
   };
 }
 

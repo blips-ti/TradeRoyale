@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { agentRunner, AgentRunner } from "../agent/agentRunner.js";
 import { env } from "../env.js";
 import type { Game, Player, PublicPlayer, Settlement, Trade } from "../domain/types.js";
-import { toOwnPlayer, toPublicPlayer } from "../domain/types.js";
+import { isAgentReady, toOwnPlayer, toPublicPlayer } from "../domain/types.js";
 import { logger } from "../logger.js";
 import { GameRepository } from "../repositories/gameRepository.js";
 import { PlayerRepository } from "../repositories/playerRepository.js";
@@ -187,7 +187,26 @@ export class GameService {
     this.assertOwner(player, input.ownerId);
     const updated: Player = { ...player, strategyPrompt: input.strategyPrompt };
     await this.players.save(updated);
+    // Setting a strategy is the final readiness step — auto-start if that fills the lobby.
+    void this.maybeAutoStart(input.gameId);
     return updated;
+  }
+
+  // Auto-start once every slot is filled by a READY player (deposit confirmed + agent set up).
+  // Fire-and-forget from setStrategy; never throws into the caller.
+  private async maybeAutoStart(gameId: string): Promise<void> {
+    try {
+      const game = await this.games.get(gameId);
+      if (!game || game.status !== "lobby") return;
+      const playerIds = await this.games.listPlayerIds(gameId);
+      const players = await this.players.getMany(playerIds);
+      const ready = players.filter(isAgentReady);
+      if (ready.length < game.maxPlayers) return;
+      await this.transitionToLive(gameId, { force: false });
+      logger.info({ gameId, ready: ready.length }, "[gameService] auto-started — lobby full + all ready");
+    } catch (error) {
+      logger.warn({ err: error, gameId }, "[gameService] auto-start check failed");
+    }
   }
 
   private assertOwner(player: Player, ownerId: string): void {

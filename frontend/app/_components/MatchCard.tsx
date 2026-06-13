@@ -65,7 +65,7 @@ export function MatchCard({
         <div className="mt-4 flex items-center justify-between">
           <span className="inline-flex items-center gap-1.5 text-[13px] text-muted">
             <Clock className="h-4 w-4" style={{ color: live ? "var(--color-loss)" : "var(--color-lime)" }} />
-            {countdown}
+            {countdown} · {match.durationMin} min
             {match.playerCount > 0 && (
               <span className="ml-1 inline-flex items-center gap-1 text-[12px]">
                 <span className="pulse-dot inline-block h-1.5 w-1.5 rounded-full bg-[color:var(--color-profit)]" />

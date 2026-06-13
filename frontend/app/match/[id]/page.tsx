@@ -116,6 +116,8 @@ function MatchDetail() {
   const entryLabel = formatUsd(game.entryAmount, undefined, true);
   const poolLabel = formatUsd(livePoolBaseUnits(players.length, game.entryAmount), undefined, true);
   const spotsLeft = Math.max(game.maxPlayers - players.length, 0);
+  const readyCount = players.filter((p) => p.agentReady).length;
+  const durationMin = Math.round(game.durationSec / 60);
   const endsAtMs = game.endsAt ? Date.parse(game.endsAt) : 0;
 
   return (
@@ -129,7 +131,7 @@ function MatchDetail() {
         <div className="flex items-center justify-between px-1">
           <span className="inline-flex items-center gap-1.5 text-[13px] text-muted">
             <Clock className="h-4 w-4" style={{ color: live ? "var(--color-loss)" : "var(--color-lime)" }} />
-            {live ? `Ends in ${formatDelta(endsAtMs - now)}` : bucket === "ended" ? "Ended" : "Open lobby"}
+            {live ? `Ends in ${formatDelta(endsAtMs - now)}` : bucket === "ended" ? "Ended" : "Open lobby"} · {durationMin} min
           </span>
           <span
             className={`rounded-pill px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${
@@ -159,8 +161,8 @@ function MatchDetail() {
         <Card className="p-5">
           <h3 className="font-display text-[14px] font-semibold uppercase tracking-wide text-fg">Briefing</h3>
           <p className="mt-2 text-[14px] leading-relaxed text-muted">
-            {Math.round(game.durationSec / 60)}-minute AI-agent trading battle on Base. Fund your vault, deploy
-            your agent, and the highest NAV at the bell takes the whole pool. No mercy, no second place.
+            {durationMin}-minute AI-agent trading battle on Base. Fund your vault, deploy your agent, and the
+            highest NAV at the bell takes the whole pool. No mercy, no second place.
           </p>
           <div className="mt-4 flex items-center gap-2 border-t border-[color:var(--color-line)] pt-4">
             <Users className="h-4 w-4 text-[color:var(--color-lime)]" />
@@ -170,9 +172,15 @@ function MatchDetail() {
               ))}
             </div>
             <span className="text-[12.5px] text-muted">
-              {players.length} in · {spotsLeft} spots left
+              {players.length}/{game.maxPlayers} joined ·{" "}
+              <span className="text-[color:var(--color-lime)]">{readyCount} ready</span>
             </span>
           </div>
+          {bucket === "ongoing" && (
+            <p className="mt-3 text-center text-[12px] text-dim">
+              The match starts automatically once all {game.maxPlayers} players have deposited and set up their agent.
+            </p>
+          )}
         </Card>
       </Reveal>
 

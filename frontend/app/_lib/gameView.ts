@@ -13,6 +13,7 @@ export type MatchView = {
   prizePoolUsd: number;
   playerCount: number;
   maxPlayers: number;
+  durationMin: number; // match length in minutes
   endsAt?: number; // ms, present once live
 };
 
@@ -45,6 +46,7 @@ export function gameToView(game: Game, playerCount: number): MatchView {
     prizePoolUsd: entryUsd * playerCount,
     playerCount,
     maxPlayers: game.maxPlayers,
+    durationMin: Math.round(game.durationSec / 60),
     endsAt: game.endsAt ? Date.parse(game.endsAt) : undefined,
   };
 }
