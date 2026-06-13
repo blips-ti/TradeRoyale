@@ -96,7 +96,15 @@ function buildDeps(options: {
       [DUST]: { priceUSD: '0.0001', decimals: 18 },
     })),
   } as unknown as LifiService;
-  const octav = { getNav: vi.fn(async () => ({ navUsd: '42', raw: {} })) } as unknown as OctavService;
+  // End-of-game scoring reads each wallet's Octav /wallet USD value. The test's finalUsdc map is in
+  // USDC base units, so the mock returns it back as human USD (÷1e6) for the orchestrator to rescale.
+  const octav = {
+    getWallet: vi.fn(async (address: string) => ({
+      navUsd: (Number(options.finalUsdc[address] ?? '0') / 1e6).toString(),
+      holdings: [],
+      raw: {},
+    })),
+  } as unknown as OctavService;
   const settlements = {
     buildSettlement: vi.fn(async (gameId: string, results: PlayerResult[]): Promise<Settlement> => ({
       gameId,
@@ -132,6 +140,8 @@ function build(deps: Deps): SettlementOrchestrator {
     deps.settlementRepo,
     USDC,
     MIN_USDC,
+    0, // settleDelayMs — no real wait in tests
+    async () => undefined, // sleep — no-op
   );
 }
 
@@ -150,7 +160,7 @@ describe('SettlementOrchestrator.settle', () => {
     expect((deps.executor.executeSwap as ReturnType<typeof vi.fn>).mock.calls[0]![1].fromToken).toBe(WETH);
   });
 
-  it('broadcasts player_liquidated and ranks players by on-chain finalUsdc with pnl', async () => {
+  it('broadcasts player_liquidated and ranks players by Octav-wallet value with pnl', async () => {
     const p1 = player('p1', [USDC]);
     const p2 = player('p2', [USDC]);
     const deps = buildDeps({
@@ -160,12 +170,12 @@ describe('SettlementOrchestrator.settle', () => {
     });
     const results = await build(deps).settle(game);
     expect(deps.broadcasts.filter((b) => b.type === 'player_liquidated')).toHaveLength(2);
-    // p1 (1.5 USDC) ranks above p2 (0.9 USDC); pnl = finalUsdc - startingBalance(1000000).
+    // p1 ($1.50 wallet) ranks above p2 ($0.90); pnl = finalUsdc - startingBalance(1000000).
     expect(results.map((r) => r.playerId)).toEqual(['p1', 'p2']);
     expect(results[0]!.rank).toBe(1);
     expect(results[0]!.pnl).toBe('500000');
     expect(results[1]!.pnl).toBe('-100000');
-    expect(results[0]!.octavNavUsd).toBe('42');
+    expect(results[0]!.octavNavUsd).toBe('1.5');
   });
 
   it('isolates a per-player failure so others still settle', async () => {
@@ -185,7 +195,7 @@ describe('SettlementOrchestrator.settle', () => {
     expect(results.map((r) => r.playerId).sort()).toEqual(['bad', 'ok']);
   });
 
-  it('scores every wallet with ONE multicall and runs the payout', async () => {
+  it('scores every wallet via Octav /wallet and runs the payout', async () => {
     const p1 = player('p1', [USDC]);
     const p2 = player('p2', [USDC]);
     const deps = buildDeps({
@@ -194,12 +204,11 @@ describe('SettlementOrchestrator.settle', () => {
       tokenBalances: {},
     });
     await build(deps).settle(game);
-    // Final-USDC scoring is a single multicall across both owners (not one read per player).
-    expect(deps.viem.getErc20BalancesForOwners).toHaveBeenCalledTimes(1);
-    const [token, owners] = (deps.viem.getErc20BalancesForOwners as ReturnType<typeof vi.fn>).mock.calls[0]!;
-    expect(token).toBe(USDC);
-    expect(owners.sort()).toEqual([p1.privyWalletAddress, p2.privyWalletAddress].sort());
-    // The payout actually runs now (today nothing called it).
+    // Each player is scored from their own Octav /wallet read (one call per player).
+    expect(deps.octav.getWallet).toHaveBeenCalledTimes(2);
+    const scoredAddrs = (deps.octav.getWallet as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]).sort();
+    expect(scoredAddrs).toEqual([p1.privyWalletAddress, p2.privyWalletAddress].sort());
+    // The payout (winner-take-all USDC consolidation) still runs.
     expect(deps.settlements.executePayout).toHaveBeenCalledTimes(1);
   });
 

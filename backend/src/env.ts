@@ -111,6 +111,9 @@ export const envSchema = z.object({
   // hit at settlement. Key carried as Authorization: Bearer.
   OCTAV_API_KEY: z.string().min(1).optional(),
   OCTAV_API_URL: z.string().url().default(DEFAULT_OCTAV_API_URL),
+  // Delay after a game's deadline before the end-of-game Octav /wallet read + scoring. Lets the
+  // chain + Octav indexer reflect the final wallet state (the FE shows a settling countdown).
+  SETTLE_OCTAV_DELAY_MS: z.coerce.number().int().min(0).default(60_000),
   // Liquidation dust floor: positions worth less than this base-unit USDC value are skipped.
   LIQUIDATION_MIN_USDC: z
     .string()

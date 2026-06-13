@@ -98,26 +98,22 @@ export class OctavService {
     return { navUsd: this.normalizeNav(body.nav), raw: body };
   }
 
-  // GET /v1/portfolio?addresses=<address>&waitForSync=true&includeImages=true — forces a fresh
-  // sync and returns the total USD net worth + the wallet's token holdings (with logos). Used by
-  // the live NAV sampler for the arena chart, standings, and wallet panel.
-  async getPortfolio(address: string): Promise<PortfolioResult> {
+  // GET /v1/wallet?addresses=<address>&includeImages=true — wallet token balances only (no DeFi
+  // positions), with logos. Unlike /portfolio there is NO ~1min server-side cache, so it reflects
+  // the wallet's current state immediately — used by the live sampler and end-of-game scoring.
+  async getWallet(address: string): Promise<PortfolioResult> {
     if (!this.apiKey) {
       throw new MissingOctavCredentialsError("OCTAV_API_KEY is not set");
     }
-    const params = new URLSearchParams({
-      addresses: address,
-      waitForSync: "true",
-      includeImages: "true",
-    });
+    const params = new URLSearchParams({ addresses: address, includeImages: "true" });
     let response: Response;
     try {
-      response = await fetch(`${this.baseUrl}/portfolio?${params.toString()}`, {
+      response = await fetch(`${this.baseUrl}/wallet?${params.toString()}`, {
         headers: { accept: "application/json", authorization: `Bearer ${this.apiKey}` },
       });
     } catch (error) {
-      logger.warn({ err: error, address }, "[octav] portfolio request failed");
-      throw new OctavError("Octav portfolio request failed");
+      logger.warn({ err: error, address }, "[octav] wallet request failed");
+      throw new OctavError("Octav wallet request failed");
     }
     if (!response.ok) {
       const detail = await response.text().catch(() => "");
@@ -128,18 +124,14 @@ export class OctavService {
     return { navUsd: this.normalizeNav(entry?.networth), holdings: this.parseHoldings(entry), raw: body };
   }
 
-  // Convenience for callers that only need NAV (e.g. the diagnostic).
-  async getPortfolioNav(address: string): Promise<NavResult> {
-    const { navUsd, raw } = await this.getPortfolio(address);
-    return { navUsd, raw };
-  }
-
-  // Flatten the plain wallet tokens across chains, biggest USD value first.
+  // Flatten the plain wallet tokens across chains, biggest USD value first. The /wallet response
+  // carries thousands of zero-value spam tokens — drop anything without a positive USD value.
   private parseHoldings(entry: OctavPortfolioEntry | undefined): Holding[] {
     const chains = entry?.assetByProtocols?.wallet?.chains ?? {};
     const out: Holding[] = [];
     for (const [chainKey, chain] of Object.entries(chains)) {
       for (const asset of chain.protocolPositions?.WALLET?.assets ?? []) {
+        if (!(Number(asset.value) > 0)) continue;
         out.push({
           symbol: asset.symbol ?? "",
           name: asset.name ?? "",

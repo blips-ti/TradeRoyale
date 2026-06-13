@@ -81,7 +81,7 @@ export function buildHealthRoutes(unlink: UnlinkService = unlinkService): Hono {
       await viemReader.getNativeBalance(sampleAddr);
       await viemReader.getErc20Balances([env.ENTRY_TOKEN_ADDRESS], sampleAddr);
     });
-    const octav = await tryStep(() => octavService.getPortfolioNav(sampleAddr));
+    const octav = await tryStep(() => octavService.getWallet(sampleAddr));
     const anthropic = await tryStep(() => getAnthropicClient().beta.messages.toolRunner(buildTest(false)).runUntilDone());
     const anthropicMcp = env.AGENT_USE_LIFI_MCP
       ? await tryStep(() => getAnthropicClient().beta.messages.toolRunner(buildTest(true)).runUntilDone())

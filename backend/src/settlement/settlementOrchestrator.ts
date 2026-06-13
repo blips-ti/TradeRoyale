@@ -14,8 +14,9 @@ import { gameEventHub, GameEventHub } from "../ws/gameEventHub.js";
 import { settlementService, SettlementService } from "./settlementService.js";
 
 // Server-driven Phase-3 settlement: liquidate every non-entry touched token back to USDC on
-// Base, read authoritative on-chain final USDC via ONE multicall, cross-check Octav NAV, rank,
-// persist, then consolidate all USDC into the winner. Trading (the agent) is NOT involved.
+// Base, wait out the settle window, then score every player by their Octav /wallet USD value
+// (so un-liquidated holdings still count), rank, persist, and consolidate USDC into the winner.
+// Trading (the agent) is NOT involved.
 export class SettlementOrchestrator {
   constructor(
     private readonly games: GameRepository = new GameRepository(),
@@ -29,11 +30,14 @@ export class SettlementOrchestrator {
     private readonly settlementRepo: SettlementRepository = new SettlementRepository(),
     private readonly entryToken: string = env.ENTRY_TOKEN_ADDRESS,
     private readonly minUsdc: string = env.LIQUIDATION_MIN_USDC,
+    private readonly settleDelayMs: number = env.SETTLE_OCTAV_DELAY_MS,
+    private readonly sleep: (ms: number) => Promise<void> = defaultSleep,
   ) {}
 
-  // Liquidates every player crash-safe, then scores them all with ONE multicall reading each
-  // wallet's final USDC, ranks by finalUsdc desc, persists, and runs the winner-take-all payout.
-  // Wrapped in try/catch so a thrown crash still lands API-readable diagnostics before rethrow.
+  // Liquidates every player crash-safe, waits out the settle window so the chain + Octav reflect
+  // the final wallet, scores each player by their Octav /wallet USD value, ranks desc, persists,
+  // and runs the winner-take-all payout. Wrapped in try/catch so a thrown crash still lands
+  // API-readable diagnostics before rethrow.
   async settle(game: Game): Promise<PlayerResult[]> {
     try {
       return await this.runSettlement(game);
@@ -54,8 +58,8 @@ export class SettlementOrchestrator {
       .map((result) => result.value);
     const scoredResults = settledPlayers.map((settled) => settled.player);
     const liquidations = settledPlayers.flatMap((settled) => settled.liquidations);
-    const finalUsdc = await this.scoreUsdc(scoredResults);
-    const scored = await Promise.all(scoredResults.map((player) => this.scorePlayer(game, player, finalUsdc)));
+    await this.waitForSettleWindow(game);
+    const scored = await Promise.all(scoredResults.map((player) => this.scorePlayer(game, player)));
     const results = this.rank(scored);
     logger.info(
       { gameId: game.id, winnerPlayerId: results[0]?.playerId ?? null, ranking: results.map((r) => ({ rank: r.rank, playerId: r.playerId, finalUsdc: r.finalUsdc })) },
@@ -97,12 +101,14 @@ export class SettlementOrchestrator {
     return { gameId, winnerPlayerId: null, prizePoolUsdc: "0", perPlayer: [], computedAt: new Date().toISOString(), payoutStatus: "pending" };
   }
 
-  // ONE multicall reading the entry-token (USDC) balance of every player's Privy wallet — the
-  // single RPC call that checks every trader's wallet. Keyed by lowercased owner address.
-  private async scoreUsdc(players: Player[]): Promise<Record<string, string>> {
-    const addresses = players.map((player) => player.privyWalletAddress).filter((address): address is string => !!address);
-    if (addresses.length === 0) return {};
-    return this.viem.getErc20BalancesForOwners(this.entryToken, addresses);
+  // Hold off the end-of-game Octav read until SETTLE_OCTAV_DELAY_MS past the deadline, so the
+  // chain + Octav indexer have time to reflect the final wallet (the FE shows the countdown).
+  private async waitForSettleWindow(game: Game): Promise<void> {
+    if (!game.endsAt) return;
+    const waitMs = new Date(game.endsAt).getTime() + this.settleDelayMs - Date.now();
+    if (waitMs <= 0) return;
+    logger.info({ gameId: game.id, waitMs }, "[settlement] waiting for octav settle window");
+    await this.sleep(waitMs);
   }
 
   private async settlePlayer(game: Game, player: Player): Promise<SettledPlayer> {
@@ -112,10 +118,12 @@ export class SettlementOrchestrator {
     return { player, liquidations };
   }
 
-  private async scorePlayer(game: Game, player: Player, balances: Record<string, string>): Promise<ScoredPlayer> {
-    const finalUsdc = balances[(player.privyWalletAddress ?? "").toLowerCase()] ?? "0";
-    logger.info({ gameId: game.id, playerId: player.id, finalUsdc }, "[settlement] player scored");
-    const octavNavUsd = await this.fetchNav(player);
+  // Score = the player's full Octav /wallet USD value (un-liquidated holdings included),
+  // expressed in USDC base units (6dp) so it ranks + displays like the on-chain entry amount.
+  private async scorePlayer(game: Game, player: Player): Promise<ScoredPlayer> {
+    const octavNavUsd = await this.fetchWalletValue(player);
+    const finalUsdc = new BigNumber(octavNavUsd).times(USDC_SCALE).toFixed(0);
+    logger.info({ gameId: game.id, playerId: player.id, finalUsdc, octavNavUsd }, "[settlement] player scored");
     await this.players.save({ ...player, finalUsdc, octavNavUsd });
     return {
       playerId: player.id,
@@ -193,19 +201,20 @@ export class SettlementOrchestrator {
     return (player.touchedTokens ?? []).map((token) => token.toLowerCase()).filter((token) => token !== entry);
   }
 
-  private async fetchNav(player: Player): Promise<string> {
+  // The player's total Octav /wallet USD value (human decimal string). On any failure returns
+  // "0" — a settlement must never be blocked by an Octav hiccup.
+  private async fetchWalletValue(player: Player): Promise<string> {
     if (!player.privyWalletAddress) return "0";
     try {
-      const nav = await this.octav.getNav(player.privyWalletAddress);
-      return nav.navUsd;
+      const { navUsd } = await this.octav.getWallet(player.privyWalletAddress);
+      return navUsd;
     } catch (error) {
-      // NAV is an advisory cross-check, never the score — a failure must not block settlement.
-      logger.warn({ err: error, playerId: player.id }, "[settlement] octav NAV fetch failed");
+      logger.warn({ err: error, playerId: player.id }, "[settlement] octav wallet fetch failed");
       return "0";
     }
   }
 
-  // Rank by on-chain finalUsdc desc (the source-of-truth score); ties keep input order.
+  // Rank by finalUsdc desc (the Octav-wallet score in USDC base units); ties keep input order.
   private rank(scored: ScoredPlayer[]): PlayerResult[] {
     const sorted = [...scored].sort((a, b) => (new BigNumber(b.finalUsdc).gt(a.finalUsdc) ? 1 : -1));
     return sorted.map((player, index) => ({
@@ -222,6 +231,12 @@ export class SettlementOrchestrator {
 }
 
 const USDC_DECIMALS = 6;
+// Octav reports human USD ("0.1"); multiply by 10^6 to express the score in USDC base units.
+const USDC_SCALE = new BigNumber(10).pow(USDC_DECIMALS);
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 // A liquidated player plus its per-token outcome trail, carried from settlePlayer up to settle()
 // so all players' liquidations aggregate into the persisted diagnostics.

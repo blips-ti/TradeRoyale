@@ -5,10 +5,10 @@ import { PlayerRepository } from "../repositories/playerRepository.js";
 import { octavService, OctavService } from "../services/octavService.js";
 import { gameEventHub, GameEventHub } from "../ws/gameEventHub.js";
 
-const NAV_INTERVAL_MS = 60_000; // Octav portfolio sync is heavy + credit-billed — sample once a minute.
+const NAV_INTERVAL_MS = 30_000; // Octav /wallet has no cache — sample every 30s for a live feel.
 
-// Every minute, reads each live player's trading-wallet NAV from the Octav portfolio API
-// (waitForSync) and broadcasts portfolio_update so the arena chart + standings stay live.
+// Every 30s, reads each live player's trading-wallet holdings from the Octav /wallet API and
+// broadcasts portfolio_update so the arena chart + standings + wallet panel stay live.
 export class NavWatcher {
   private timer: NodeJS.Timeout | undefined;
 
@@ -51,7 +51,7 @@ export class NavWatcher {
 
   private async samplePlayer(gameId: string, player: Player): Promise<void> {
     try {
-      const { navUsd, holdings } = await this.octav.getPortfolio(player.privyWalletAddress as string);
+      const { navUsd, holdings } = await this.octav.getWallet(player.privyWalletAddress as string);
       this.hub.broadcast("portfolio_update", gameId, { playerId: player.id, navUsd, holdings });
     } catch (error) {
       logger.warn({ err: error, playerId: player.id, gameId }, "[navWatcher] nav sample failed");

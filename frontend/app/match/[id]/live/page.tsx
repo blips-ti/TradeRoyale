@@ -20,6 +20,10 @@ type Msg = { role: "you" | "agent" | "system"; text: string; txHash?: string };
 
 const COLORS = ["#C5F72B", "#34D6E0", "#FF36A3", "#ff8a3d", "#3da5ff", "#A6D61F", "#8B909C"];
 
+// Must match the backend SETTLE_OCTAV_DELAY_MS — the wait after the bell before the final Octav
+// /wallet snapshot. The settling screen counts this window down before results appear.
+const SETTLE_WINDOW_MS = 60_000;
+
 // Known Base tokens so trade lines read "Swapped 0.05 USDC → WETH" instead of raw addresses.
 const TOKEN_META: Record<string, { symbol: string; decimals: number }> = {
   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": { symbol: "USDC", decimals: 6 },
@@ -187,21 +191,33 @@ export default function LivePage() {
     });
   }, [players, entryUsd]);
 
-  // If the match already ended before we connected, pull the settled result.
+  // Pull the settled result once the match is over. While settling (the deadline has passed but
+  // the settlement record isn't written yet) we poll every 3s so results appear the moment the
+  // backend finishes its Octav snapshot — the WS game_ended event is the fast path on top of this.
+  const bell = view?.endsAt ? now >= view.endsAt : false;
   useEffect(() => {
-    if (view?.bucket !== "ended") return;
-    api
-      .getResults(params.id)
-      .then((s) => {
-        if (s)
-          setSettled({
-            winnerPlayerId: s.winnerPlayerId,
-            potUsd: entryUsd * Math.max(s.perPlayer.length, 1),
-            results: s.perPlayer,
-          });
-      })
-      .catch(() => {});
-  }, [view?.bucket, params.id, entryUsd]);
+    if (!bell || settled) return;
+    let alive = true;
+    const fetchResults = () => {
+      api
+        .getResults(params.id)
+        .then((s) => {
+          if (alive && s && s.perPlayer.length > 0)
+            setSettled({
+              winnerPlayerId: s.winnerPlayerId,
+              potUsd: entryUsd * Math.max(s.perPlayer.length, 1),
+              results: s.perPlayer,
+            });
+        })
+        .catch(() => {});
+    };
+    fetchResults();
+    const t = setInterval(fetchResults, 3000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [bell, settled, params.id, entryUsd]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -296,6 +312,11 @@ export default function LivePage() {
         }}
       />
     );
+  }
+
+  // The bell has rung but results aren't in yet — show the live settling countdown.
+  if (over && view.endsAt) {
+    return <SettlingScreen endsAtMs={view.endsAt} settleAtMs={view.endsAt + SETTLE_WINDOW_MS} now={now} />;
   }
 
   return (
@@ -516,6 +537,76 @@ function TokenLogo({ src, symbol }: { src?: string; symbol: string }) {
     <span className="grid h-5 w-5 place-items-center rounded-full bg-[color:var(--color-surface)] text-[8px] font-bold text-muted">
       {(symbol || "?").slice(0, 3).toUpperCase()}
     </span>
+  );
+}
+
+// Post-bell settling: a live circular countdown over the settle window, then a "finalizing"
+// spinner while the backend reads the final Octav /wallet snapshot, ranks, and pays out.
+function SettlingScreen({ endsAtMs, settleAtMs, now }: { endsAtMs: number; settleAtMs: number; now: number }) {
+  const total = Math.max(settleAtMs - endsAtMs, 1);
+  const elapsed = Math.min(Math.max(now - endsAtMs, 0), total);
+  const remainingSec = Math.max(Math.ceil((settleAtMs - now) / 1000), 0);
+  const counting = now < settleAtMs;
+
+  const R = 54;
+  const C = 2 * Math.PI * R;
+  // Lime arc shrinks as the window elapses (decreasing ring); full once we hit "finalizing".
+  const offset = counting ? C * (elapsed / total) : C;
+
+  return (
+    <div className="flex h-dvh flex-col items-center justify-center gap-7 px-8 text-center">
+      <div className="relative grid place-items-center">
+        <svg width="140" height="140" viewBox="0 0 140 140" className="-rotate-90">
+          <circle cx="70" cy="70" r={R} fill="none" stroke="var(--color-line)" strokeWidth="8" />
+          {counting && (
+            <circle
+              cx="70"
+              cy="70"
+              r={R}
+              fill="none"
+              stroke="var(--color-lime)"
+              strokeWidth="8"
+              strokeLinecap="round"
+              strokeDasharray={C}
+              strokeDashoffset={offset}
+              style={{ transition: "stroke-dashoffset 1s linear" }}
+            />
+          )}
+        </svg>
+        <div className="absolute flex flex-col items-center">
+          {counting ? (
+            <>
+              <span className="font-display text-[36px] font-bold leading-none tnum">{remainingSec}</span>
+              <span className="text-[10px] uppercase tracking-[0.22em] text-muted">sec</span>
+            </>
+          ) : (
+            <Spinner />
+          )}
+        </div>
+      </div>
+
+      <div className="flex flex-col items-center gap-2">
+        <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-[color:var(--color-lime)]">The bell rang</p>
+        <h1 className="font-display text-[26px] font-bold uppercase leading-none tracking-tight">Settling Result</h1>
+        <p className="max-w-xs text-[13px] leading-relaxed text-muted">
+          {counting
+            ? "Letting the chain settle before we snapshot every wallet's final value via Octav."
+            : "Reading the final wallet from Octav and crowning the winner…"}
+        </p>
+      </div>
+
+      <div className="flex items-center gap-1.5 text-[12px] text-dim">
+        {[0, 1, 2].map((i) => (
+          <motion.span
+            key={i}
+            className="inline-block h-1.5 w-1.5 rounded-full bg-[color:var(--color-muted)]"
+            animate={{ opacity: [0.25, 1, 0.25] }}
+            transition={{ duration: 1, repeat: Infinity, delay: i * 0.2 }}
+          />
+        ))}
+        <span className="ml-1">Crunching the Octav snapshot</span>
+      </div>
+    </div>
   );
 }
 
