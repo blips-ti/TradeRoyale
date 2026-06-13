@@ -16,9 +16,23 @@ import { formatDelta, useNow } from "@/app/_lib/useNow";
 import { PnlChartView, type Series } from "@/app/_components/PnlChart";
 import { Avatar, BotAvatar, Spinner } from "@/app/_components/ui";
 
-type Msg = { role: "you" | "agent" | "system"; text: string };
+type Msg = { role: "you" | "agent" | "system"; text: string; txHash?: string };
 
 const COLORS = ["#C5F72B", "#34D6E0", "#FF36A3", "#ff8a3d", "#3da5ff", "#A6D61F", "#8B909C"];
+
+// Known Base tokens so trade lines read "Swapped 0.05 USDC → WETH" instead of raw addresses.
+const TOKEN_META: Record<string, { symbol: string; decimals: number }> = {
+  "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": { symbol: "USDC", decimals: 6 },
+  "0x4200000000000000000000000000000000000006": { symbol: "WETH", decimals: 18 },
+  "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": { symbol: "ETH", decimals: 18 },
+};
+function tokenMeta(addr: string) {
+  return TOKEN_META[(addr || "").toLowerCase()] ?? { symbol: `${(addr || "").slice(0, 6)}…`, decimals: 18 };
+}
+function fmtTokenAmount(base: string, decimals: number) {
+  const n = baseUnitsToNumber(base, decimals);
+  return n.toLocaleString("en-US", { maximumFractionDigits: n !== 0 && Math.abs(n) < 1 ? 6 : 4 });
+}
 
 export default function LivePage() {
   const { ready, authenticated, user } = useAuth();
@@ -42,6 +56,7 @@ export default function LivePage() {
   const [navByPlayer, setNavByPlayer] = useState<Record<string, number>>({});
   const [pnlSeries, setPnlSeries] = useState<Record<string, number[]>>({});
   const [messages, setMessages] = useState<Msg[]>([]);
+  const [thinking, setThinking] = useState(false);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [settled, setSettled] = useState<{
@@ -68,12 +83,26 @@ export default function LivePage() {
         const pnl = entryUsd > 0 ? ((navUsd - entryUsd) / entryUsd) * 100 : 0;
         setPnlSeries((prev) => ({ ...prev, [pid]: [...(prev[pid] ?? [0]), pnl].slice(-60) }));
       }
+      if (e.type === "agent_thinking" && e.data.playerId === playerId) {
+        setThinking(true);
+      }
       if (e.type === "agent_update" && e.data.playerId === playerId) {
+        setThinking(false);
         const summary = String(e.data.summary ?? "").trim();
         if (summary) setMessages((m) => [...m, { role: "agent", text: summary }]);
       }
       if (e.type === "trade_executed" && e.data.playerId === playerId) {
-        setMessages((m) => [...m, { role: "system", text: `↗ executed a ${e.data.kind ?? "trade"}` }]);
+        const f = tokenMeta(String(e.data.fromToken ?? ""));
+        const t = tokenMeta(String(e.data.toToken ?? ""));
+        const amt = fmtTokenAmount(String(e.data.fromAmount ?? "0"), f.decimals);
+        setMessages((m) => [
+          ...m,
+          {
+            role: "system",
+            text: `↗ Swapped ${amt} ${f.symbol} → ${t.symbol}`,
+            txHash: e.data.txHash ? String(e.data.txHash) : undefined,
+          },
+        ]);
       }
       if (e.type === "game_ended") {
         const results = (e.data.results as PlayerResult[] | undefined) ?? [];
@@ -118,7 +147,14 @@ export default function LivePage() {
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages]);
+  }, [messages, thinking]);
+
+  // Safety net: never leave the "thinking…" indicator stuck if no agent_update arrives.
+  useEffect(() => {
+    if (!thinking) return;
+    const t = setTimeout(() => setThinking(false), 60_000);
+    return () => clearTimeout(t);
+  }, [thinking]);
 
   if (!ready || !user || !game || !view) {
     return (
@@ -158,6 +194,7 @@ export default function LivePage() {
     if (!text || !playerId || sending || !canInstruct) return;
     setDraft("");
     setMessages((m) => [...m, { role: "you", text }]);
+    setThinking(true); // optimistic — the BE wakes the agent, so a tick fires within ~1-2s
     setSending(true);
     try {
       await api.instruct(params.id, playerId, text);
@@ -213,7 +250,12 @@ export default function LivePage() {
         <div className="rounded-card border border-[color:var(--color-line)] bg-[color:var(--color-surface)] p-4">
           <div className="flex items-end justify-between">
             <div>
-              <p className="text-[11px] uppercase tracking-[0.14em] text-muted">Your NAV · via Octav</p>
+              <p className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.14em] text-muted">
+                Your NAV · via Octav
+                {live && !over && (
+                  <span className="pulse-dot inline-block h-1.5 w-1.5 rounded-full bg-[color:var(--color-profit)]" />
+                )}
+              </p>
               <p className="font-display text-[30px] font-bold leading-none tnum">{usd(myNav)}</p>
             </div>
             <div className="text-right">
@@ -295,10 +337,34 @@ export default function LivePage() {
                         : "bg-[color:var(--color-surface-2)] text-fg"
                   }`}
                 >
-                  {m.text}
+                  {m.role === "system" && m.txHash ? (
+                    <a
+                      href={`https://basescan.org/tx/${m.txHash}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="underline decoration-dotted underline-offset-2 hover:text-fg"
+                    >
+                      {m.text} ↗
+                    </a>
+                  ) : (
+                    m.text
+                  )}
                 </div>
               </div>
             ))}
+            {thinking && (
+              <div className="flex items-center gap-1.5 px-2 py-1 text-[12px] text-muted">
+                {[0, 1, 2].map((i) => (
+                  <motion.span
+                    key={i}
+                    className="inline-block h-1.5 w-1.5 rounded-full bg-[color:var(--color-muted)]"
+                    animate={{ opacity: [0.25, 1, 0.25] }}
+                    transition={{ duration: 1, repeat: Infinity, delay: i * 0.2 }}
+                  />
+                ))}
+                <span className="ml-1">your agent is thinking…</span>
+              </div>
+            )}
           </div>
           {over ? (
             <div className="border-t border-[color:var(--color-line)] p-3 text-center text-[12px] text-dim">

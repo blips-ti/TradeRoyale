@@ -105,6 +105,7 @@ export type GameEventType =
   | "game_tick"
   | "game_ended"
   | "funds_released"
+  | "agent_thinking"
   | "agent_update"
   | "trade_executed"
   | "player_liquidated"

@@ -21,6 +21,15 @@ interface RunningLoop {
 // `wait` tool; there is no shared timer and no stop-before-end threshold.
 export class AgentRunner {
   private readonly loops = new Map<string, Map<string, RunningLoop>>();
+  // playerId -> resolver that ends the current inter-turn wait early, so a live instruction
+  // triggers a near-immediate tick instead of waiting out the full pause.
+  private readonly wakes = new Map<string, () => void>();
+
+  // Cut a player's current wait short so their agent acts on a fresh instruction right away.
+  // No-op if the player isn't currently waiting (the instruction is read on the next tick anyway).
+  wake(playerId: string): void {
+    this.wakes.get(playerId)?.();
+  }
 
   constructor(
     private readonly games: GameRepository = new GameRepository(),
@@ -128,8 +137,24 @@ export class AgentRunner {
       const floorSeconds = this.minLoopIntervalMs / MS_PER_SEC;
       const clamped = clampWaitSeconds(waitSeconds, floorSeconds, this.secondsRemaining(game));
       if (clamped <= 0) return;
-      await this.sleep(clamped * MS_PER_SEC, signal);
+      await this.interruptibleSleep(player.id, clamped * MS_PER_SEC, signal);
     }
+  }
+
+  // Like sleep(), but also resolves early when wake(playerId) is called (a new instruction).
+  private interruptibleSleep(playerId: string, ms: number, signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return Promise.resolve();
+    return new Promise((resolve) => {
+      const done = (): void => {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", done);
+        this.wakes.delete(playerId);
+        resolve();
+      };
+      const timer = setTimeout(done, ms);
+      signal.addEventListener("abort", done, { once: true });
+      this.wakes.set(playerId, done);
+    });
   }
 
   // Abortable sleep — resolves early (not rejects) when the signal aborts, so the loop exits

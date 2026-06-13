@@ -156,6 +156,8 @@ export class GameService {
     const player = await this.getPlayer(input.gameId, input.playerId);
     this.assertOwner(player, input.ownerId);
     await this.players.save({ ...player, pendingInstruction: input.message });
+    // Cut the agent's current wait short so it acts on the instruction within a second or two.
+    this.runner.wake(input.playerId);
   }
 
   // Owner-only: the player's own Unlink account keys, so the FE can deposit the entry funds

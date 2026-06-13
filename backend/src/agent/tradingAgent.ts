@@ -101,6 +101,8 @@ export class TradingAgent {
     const client = getAnthropicClient();
     // The signal is threaded into the tool-runner so the buzzer/shutdown aborts an in-flight turn.
     const runner = client.beta.messages.toolRunner(params, signal ? { signal } : undefined);
+    // Tell the arena the agent is reasoning now (drives the live "thinking…" indicator).
+    this.hub.broadcast('agent_thinking', game.id, { playerId: player.id });
     const finalMessage = await runner.runUntilDone();
     const summary = this.extractSummary(finalMessage.content);
     this.hub.broadcast('agent_update', game.id, { playerId: player.id, summary });

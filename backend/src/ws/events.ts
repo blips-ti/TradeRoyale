@@ -5,6 +5,8 @@ export type GameEventType =
   | 'game_tick'
   | 'game_ended'
   | 'funds_released'
+  // Agent started a turn (LLM is reasoning) — drives the "thinking…" indicator in the arena.
+  | 'agent_thinking'
   | 'agent_update'
   | 'trade_executed'
   | 'player_liquidated'
