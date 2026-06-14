@@ -235,6 +235,7 @@ openssl rand -hex 32
 | `DEFAULT_WAIT_SECONDS`     | no       | `30`                                         | wait applied after a turn when the agent didn't call the `wait` tool |
 | `AGENT_MAX_TURNS_PER_GAME` | no       | `0`                                          | hard turn cap per player per game (`0` = unlimited) |
 | `LIFI_API_KEY`             | no       | —                                            | LI.FI key — REST `x-lifi-api-key` header AND LI.FI MCP `Authorization: Bearer`. Raises the MCP rate limit (see below) |
+| `LIFI_INTEGRATOR`          | no       | `trade-royal`                                | integrator string sent on every LI.FI quote; groups our trades in the LI.FI dashboard for attribution |
 | `AGENT_USE_LIFI_MCP`       | no       | `true`                                       | link the agent to LI.FI's hosted MCP via the Anthropic MCP connector |
 | `LIFI_MCP_URL`             | no       | `https://mcp.li.quest/mcp`                   | LI.FI hosted MCP endpoint (Streamable HTTP) |
 | `PRIVY_APP_ID`             | no\*     | —                                            | Privy app id (dashboard.privy.io); lazy — required once a game starts |

@@ -126,6 +126,8 @@ export class LifiService {
     private readonly maxSlippageBps: number | "auto" = env.MAX_SLIPPAGE_BPS,
     private readonly apiKey: string | undefined = env.LIFI_API_KEY,
     private readonly maxPriceImpact: number = env.MAX_PRICE_IMPACT,
+    // Groups our quotes under one integrator in the LI.FI dashboard for trade attribution.
+    private readonly integrator: string = env.LIFI_INTEGRATOR,
   ) {}
 
   static getInstance(): LifiService {
@@ -145,6 +147,7 @@ export class LifiService {
       fromAmount: request.fromAmount,
       fromAddress: request.fromAddress,
       slippage: this.slippageDecimal(),
+      integrator: this.integrator,
     });
     // Auto mode bounds risk with maxPriceImpact (decimal) instead of a fixed bps reject.
     if (this.isAutoMode()) params.set("maxPriceImpact", String(this.maxPriceImpact));
@@ -166,6 +169,7 @@ export class LifiService {
       fromAddress: request.fromAddress,
       toAmount: request.toAmount,
       slippage: this.slippageDecimal(),
+      integrator: this.integrator,
       // Auto mode bounds risk with maxPriceImpact instead of a fixed bps cap; omitted when numeric.
       ...(this.isAutoMode() ? { maxPriceImpact: this.maxPriceImpact } : {}),
       contractCalls: [

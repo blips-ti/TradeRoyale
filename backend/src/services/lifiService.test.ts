@@ -133,6 +133,7 @@ describe('LifiService', () => {
       const url = new URL(String(fetchSpy.mock.calls[0]![0]), 'https://li.quest/v1');
       expect(url.searchParams.get('maxPriceImpact')).toBe(String(MAX_PRICE_IMPACT));
       expect(url.searchParams.get('slippage')).toBe('0.05');
+      expect(url.searchParams.get('integrator')).toBe('trade-royal');
     });
 
     it('still rejects an erc20 quote that carries a non-zero native value (guards unchanged)', async () => {
@@ -155,6 +156,7 @@ describe('LifiService', () => {
       const url = new URL(String(fetchSpy.mock.calls[0]![0]), 'https://li.quest/v1');
       expect(url.searchParams.get('slippage')).toBe('0.01');
       expect(url.searchParams.get('maxPriceImpact')).toBeNull();
+      expect(url.searchParams.get('integrator')).toBe('trade-royal');
     });
   });
 
@@ -229,6 +231,7 @@ describe('LifiService', () => {
       expect(sent.fromChain).toBe(String(CHAIN_ID));
       expect(sent.toChain).toBe(String(CHAIN_ID));
       expect(sent.toAmount).toBe('1000000000000000');
+      expect(sent.integrator).toBe('trade-royal');
       expect(sent.contractCalls[0].toContractCallData).toBe('0xd0e30db0');
       // Numeric-cap mode pins a fixed slippage and does NOT send maxPriceImpact.
       expect(sent.slippage).toBe('0.01');
@@ -252,6 +255,7 @@ describe('LifiService', () => {
       const sent = JSON.parse((fetchSpy.mock.calls[0]![1] as RequestInit).body as string);
       expect(sent.slippage).toBe('0.05');
       expect(sent.maxPriceImpact).toBe(MAX_PRICE_IMPACT);
+      expect(sent.integrator).toBe('trade-royal');
     });
 
     it('rejects a quote whose action is not same-chain Base', async () => {

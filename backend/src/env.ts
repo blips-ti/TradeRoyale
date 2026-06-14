@@ -23,6 +23,9 @@ const MAX_BPS = 10_000;
 // ceiling — toAmountMin remains the real on-chain protection. Range 0..1.
 const DEFAULT_MAX_PRICE_IMPACT = 0.5;
 const DEFAULT_LIFI_MCP_URL = 'https://mcp.li.quest/mcp';
+// LI.FI dashboard groups transactions by integrator; a code default keeps attribution working
+// standalone (Railway vars are unreliable for this path).
+const DEFAULT_LIFI_INTEGRATOR = 'trade-royal';
 const DEFAULT_BASE_RPC_URL = 'https://mainnet.base.org';
 const DEFAULT_OCTAV_API_URL = 'https://api.octav.fi/v1';
 // Default 0 — liquidation never skips small positions as dust unless explicitly configured.
@@ -75,6 +78,8 @@ export const envSchema = z.object({
   // Hard cap on turns per player per game (cost bound). 0 = unlimited.
   AGENT_MAX_TURNS_PER_GAME: z.coerce.number().int().min(0).default(DEFAULT_AGENT_MAX_TURNS_PER_GAME),
   LIFI_API_KEY: z.string().min(1).optional(),
+  // LI.FI dashboard attribution: every quote carries this integrator so trades are grouped.
+  LIFI_INTEGRATOR: z.string().min(1).default(DEFAULT_LIFI_INTEGRATOR),
   CHAIN_ID: z.coerce.number().int().positive().default(DEFAULT_CHAIN_ID),
   // Display / portfolio-seed set of well-known Base tokens — NOT a trade whitelist. The
   // agent may trade any token LI.FI can quote on Base; this only seeds get_market and the
