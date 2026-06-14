@@ -45,7 +45,8 @@ export function gameToView(game: Game, playerCount: number): MatchView {
     tags: ["crypto"],
     bucket: bucketOf(game.status),
     entryUsd,
-    prizePoolUsd: entryUsd * playerCount,
+    // Full advertised pot = entry fee × the match's player capacity (never $0 for an empty lobby).
+    prizePoolUsd: entryUsd * game.maxPlayers,
     playerCount,
     maxPlayers: game.maxPlayers,
     durationMin: Math.round(game.durationSec / 60),
