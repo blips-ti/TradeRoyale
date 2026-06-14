@@ -26,7 +26,7 @@ const SETTLE_WINDOW_MS = 15_000;
 
 // How long the agent spends on its injected strategy turn right after the bell. We block input
 // and show a boot overlay for this long so the user's first order isn't lost mid-strategy.
-const AGENT_BOOT_MS = 10_000;
+const AGENT_BOOT_MS = 15_000;
 
 // Known Base tokens so trade lines read "Swapped 0.05 USDC → WETH" instead of raw addresses.
 const TOKEN_META: Record<string, { symbol: string; decimals: number }> = {
@@ -599,7 +599,7 @@ function TokenLogo({ src, symbol }: { src?: string; symbol: string }) {
   );
 }
 
-// Full-screen boot gate shown for the first ~10s after the bell, while the agent processes its
+// Full-screen boot gate shown for the first ~15s after the bell, while the agent processes its
 // injected strategy turn. Blocks input (covers the screen) so the user's first order isn't lost.
 function BootOverlay({ secondsLeft, totalMs, elapsedMs }: { secondsLeft: number; totalMs: number; elapsedMs: number }) {
   const R = 52;
