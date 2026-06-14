@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { Radio, Send, Trophy } from "lucide-react";
 import { useAuth } from "@/app/_lib/auth";
 import { useGame } from "@/app/_lib/store";
@@ -23,6 +23,10 @@ const COLORS = ["#C5F72B", "#34D6E0", "#FF36A3", "#ff8a3d", "#3da5ff", "#A6D61F"
 // Must match the backend SETTLE_OCTAV_DELAY_MS — the wait after the bell before the final Octav
 // /wallet snapshot. The settling screen counts this window down before results appear.
 const SETTLE_WINDOW_MS = 15_000;
+
+// How long the agent spends on its injected strategy turn right after the bell. We block input
+// and show a boot overlay for this long so the user's first order isn't lost mid-strategy.
+const AGENT_BOOT_MS = 10_000;
 
 // Known Base tokens so trade lines read "Swapped 0.05 USDC → WETH" instead of raw addresses.
 const TOKEN_META: Record<string, { symbol: string; decimals: number }> = {
@@ -270,7 +274,12 @@ export default function LivePage() {
   const live = view.bucket === "live";
   // The bell has rung once the game ended or we're past endsAt (settling) — agent locks here.
   const over = view.bucket === "ended" || (!!view.endsAt && now >= view.endsAt);
-  const canInstruct = live && !over;
+  // For the first ~10s after the bell the agent is busy processing its injected strategy turn —
+  // instructions sent now get swallowed. Block input + show a boot overlay until it's ready.
+  const startedAt = game.startedAt ? Date.parse(game.startedAt) : null;
+  const bootMsLeft = startedAt ? startedAt + AGENT_BOOT_MS - now : 0;
+  const booting = live && !over && !!playerId && bootMsLeft > 0;
+  const canInstruct = live && !over && !booting;
   const myNav = playerId ? (navByPlayer[playerId] ?? entryUsd) : entryUsd;
   const myPnl = entryUsd > 0 ? ((myNav - entryUsd) / entryUsd) * 100 : 0;
 
@@ -368,6 +377,9 @@ export default function LivePage() {
 
   return (
     <div className="flex h-dvh flex-col">
+      <AnimatePresence>
+        {booting && <BootOverlay secondsLeft={Math.ceil(bootMsLeft / 1000)} totalMs={AGENT_BOOT_MS} elapsedMs={AGENT_BOOT_MS - bootMsLeft} />}
+      </AnimatePresence>
       <header className="flex items-center justify-between px-5 pb-3 pt-[max(env(safe-area-inset-top),0.9rem)]">
         <div>
           <h1 className="font-display text-[18px] font-bold uppercase leading-none tracking-tight">{view.name}</h1>
@@ -584,6 +596,71 @@ function TokenLogo({ src, symbol }: { src?: string; symbol: string }) {
     <span className="grid h-5 w-5 place-items-center rounded-full bg-[color:var(--color-surface)] text-[8px] font-bold text-muted">
       {(symbol || "?").slice(0, 3).toUpperCase()}
     </span>
+  );
+}
+
+// Full-screen boot gate shown for the first ~10s after the bell, while the agent processes its
+// injected strategy turn. Blocks input (covers the screen) so the user's first order isn't lost.
+function BootOverlay({ secondsLeft, totalMs, elapsedMs }: { secondsLeft: number; totalMs: number; elapsedMs: number }) {
+  const R = 52;
+  const C = 2 * Math.PI * R;
+  const frac = Math.min(Math.max(elapsedMs / totalMs, 0), 1);
+  const offset = C * (1 - frac); // ring fills up as the agent boots
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.35 }}
+      className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-7 bg-[color:var(--color-bg)]/90 px-8 text-center backdrop-blur-md"
+    >
+      <div className="relative grid place-items-center">
+        <motion.span
+          className="absolute h-32 w-32 rounded-full bg-[color:var(--color-lime)]/15"
+          animate={{ scale: [1, 1.25, 1], opacity: [0.5, 0.15, 0.5] }}
+          transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
+        />
+        <svg width="136" height="136" viewBox="0 0 136 136" className="-rotate-90">
+          <circle cx="68" cy="68" r={R} fill="none" stroke="var(--color-line)" strokeWidth="6" />
+          <circle
+            cx="68"
+            cy="68"
+            r={R}
+            fill="none"
+            stroke="var(--color-lime)"
+            strokeWidth="6"
+            strokeLinecap="round"
+            strokeDasharray={C}
+            strokeDashoffset={offset}
+            style={{ transition: "stroke-dashoffset 1s linear" }}
+          />
+        </svg>
+        <div className="absolute flex flex-col items-center">
+          <span className="font-display text-[40px] font-bold leading-none tnum text-[color:var(--color-lime)]">{secondsLeft}</span>
+          <span className="text-[10px] uppercase tracking-[0.22em] text-muted">sec</span>
+        </div>
+      </div>
+
+      <div className="flex flex-col items-center gap-2">
+        <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-[color:var(--color-lime)]">Agent booting</p>
+        <h2 className="font-display text-[24px] font-bold uppercase leading-none tracking-tight">Reading its strategy</h2>
+        <p className="max-w-xs text-[13px] leading-relaxed text-muted">
+          Your agent is processing its setup. Hold on — you&apos;ll be able to send orders the moment this clears.
+        </p>
+      </div>
+
+      <div className="flex items-center gap-1.5">
+        {[0, 1, 2].map((i) => (
+          <motion.span
+            key={i}
+            className="inline-block h-2 w-2 rounded-full bg-[color:var(--color-lime)]"
+            animate={{ opacity: [0.3, 1, 0.3] }}
+            transition={{ duration: 1, repeat: Infinity, delay: i * 0.2 }}
+          />
+        ))}
+      </div>
+    </motion.div>
   );
 }
 
