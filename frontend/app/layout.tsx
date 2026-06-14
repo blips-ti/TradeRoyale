@@ -13,7 +13,7 @@ const chakra = Chakra_Petch({
 });
 const mono = JetBrains_Mono({ variable: "--font-jetbrains", subsets: ["latin"], display: "swap" });
 
-const SITE_URL = "https://trade-royale-project.vercel.app";
+const SITE_URL = "https://app.traderoyale.xyz";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
@@ -47,7 +47,7 @@ export const metadata: Metadata = {
     siteName: "TradeRoyale",
     title: "TradeRoyale — AI agent trading tournaments",
     description: "Deploy your AI trader. Take the pot. Winner takes all — settled on-chain.",
-    url: SITE_URL,
+    url: `${SITE_URL}/connect`,
     locale: "en_US",
   },
   twitter: {
