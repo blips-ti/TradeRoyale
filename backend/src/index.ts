@@ -4,19 +4,11 @@ import { agentRunner } from "./agent/agentRunner.js";
 import { createApp } from "./app.js";
 import { env } from "./env.js";
 import { closeRedis } from "./lib/redis.js";
+import { rpcHost } from "./lib/rpcHost.js";
 import { logger } from "./logger.js";
 import { depositWatcher } from "./workers/depositWatcher.js";
 import { gameClock } from "./workers/gameClock.js";
 import { navWatcher } from "./workers/navWatcher.js";
-
-// Host only — a dedicated RPC URL carries an API key in its path/query, so never log the full URL.
-function rpcHost(rawUrl: string): string {
-  try {
-    return new URL(rawUrl).host;
-  } catch {
-    return "<invalid-url>";
-  }
-}
 
 function start(): void {
   const { app, injectWebSocket } = createApp();

@@ -4,6 +4,7 @@ import { buildAgentRequestParams } from '../agent/agentRequest.js';
 import { getAnthropicClient } from '../agent/anthropicClient.js';
 import { env } from '../env.js';
 import { getRedis } from '../lib/redis.js';
+import { redactRpcUrl, rpcHost } from '../lib/rpcHost.js';
 import { logger } from '../logger.js';
 import { lifiService } from '../services/lifiService.js';
 import { octavService } from '../services/octavService.js';
@@ -77,10 +78,15 @@ export function buildHealthRoutes(unlink: UnlinkService = unlinkService): Hono {
     const lifiPrices = await tryStep(() => lifiService.getPrices([env.ENTRY_TOKEN_ADDRESS]));
     // The on-chain reads runTick does BEFORE any Anthropic call — the untested gap. If this
     // fails, BASE_RPC_URL (default public mainnet.base.org) is rate-limiting/blocking the reads.
-    const viemRpc = await tryStep(async () => {
+    const viemRpcRaw = await tryStep(async () => {
       await viemReader.getNativeBalance(sampleAddr);
       await viemReader.getErc20Balances([env.ENTRY_TOKEN_ADDRESS], sampleAddr);
     });
+    // viem error messages embed the full BASE_RPC_URL (key in path/query) — redact to host before
+    // it leaves in the response.
+    const viemRpc = viemRpcRaw.error
+      ? { ...viemRpcRaw, error: redactRpcUrl(viemRpcRaw.error, env.BASE_RPC_URL) }
+      : viemRpcRaw;
     const octav = await tryStep(() => octavService.getWallet(sampleAddr));
     const anthropic = await tryStep(() => getAnthropicClient().beta.messages.toolRunner(buildTest(false)).runUntilDone());
     const anthropicMcp = env.AGENT_USE_LIFI_MCP
@@ -90,7 +96,7 @@ export function buildHealthRoutes(unlink: UnlinkService = unlinkService): Hono {
     return c.json({
       model: env.AGENT_MODEL,
       lifiMcpEnabled: env.AGENT_USE_LIFI_MCP,
-      baseRpcUrl: env.BASE_RPC_URL,
+      baseRpcHost: rpcHost(env.BASE_RPC_URL),
       hasAnthropicKey: Boolean(env.ANTHROPIC_API_KEY),
       hasOctavKey: Boolean(env.OCTAV_API_KEY),
       hasLifiKey: Boolean(env.LIFI_API_KEY),
