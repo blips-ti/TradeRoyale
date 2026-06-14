@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { ArrowLeft, ArrowRight, Check, Clock, Crown, Lock, ShieldCheck, Trophy, Users, Wallet, WifiOff, X } from "lucide-react";
-import { useWallets } from "@privy-io/react-auth";
+import { useConnectWallet, useWallets } from "@privy-io/react-auth";
 import { useAuth } from "@/app/_lib/auth";
 import { useGame } from "@/app/_lib/store";
 import { api } from "@/app/_lib/api";
@@ -13,6 +13,14 @@ import type { Game, PlayerResult, PublicPlayer } from "@/app/_lib/types";
 import { bannerSeedFor, gameName } from "@/app/_lib/gameView";
 import { baseUnitsToNumber, bucketOf, formatUsd, livePoolBaseUnits } from "@/app/_lib/units";
 import { formatDelta, useNow } from "@/app/_lib/useNow";
+
+// Minimal shape shared by a Privy useWallets() ConnectedWallet and a useConnectWallet() result —
+// enough to switch to Base and hand a provider to the deposit flow.
+type EvmWallet = {
+  address?: string;
+  switchChain: (chainId: number | `0x${string}`) => Promise<void>;
+  getEthereumProvider: () => Promise<unknown>;
+};
 import { AppShell } from "@/app/_components/AppShell";
 import { MatchBanner } from "@/app/_components/MatchBanner";
 import { Avatar, Button, Card, Reveal, Spinner } from "@/app/_components/ui";
@@ -371,11 +379,43 @@ function BuyInSheet({
   const [error, setError] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState(false);
 
+  // On mobile PWAs (e.g. Rabby over WalletConnect) the session often drops after login, so
+  // useWallets() is empty at deposit time even though the wallet is linked. useConnectWallet lets
+  // us re-establish the connection on demand; onSuccess hands back the freshly connected wallet.
+  const connectCbRef = useRef<{ resolve: (w: EvmWallet) => void; reject: (e: Error) => void } | null>(null);
+  const { connectWallet } = useConnectWallet({
+    onSuccess: ({ wallet }) => {
+      const cb = connectCbRef.current;
+      connectCbRef.current = null;
+      if (!cb) return;
+      if ("getEthereumProvider" in wallet) cb.resolve(wallet as EvmWallet);
+      else cb.reject(new Error("Connect an Ethereum wallet on Base to deposit."));
+    },
+    onError: (err) => {
+      const cb = connectCbRef.current;
+      connectCbRef.current = null;
+      cb?.reject(new Error(typeof err === "string" && err ? err : "Wallet connection was cancelled."));
+    },
+  });
+
   const PHASE_LABEL: Record<DepositPhase, string> = {
+    connecting: "Connecting your wallet…",
     preparing: "Setting up your vault…",
     registering: "Registering…",
     depositing: "Confirm in your wallet…",
     confirming: "Confirming deposit…",
+  };
+
+  // The wallet to deposit from: prefer the already-connected one matching the logged-in owner,
+  // otherwise (empty on mobile PWAs) prompt a reconnect and use the wallet that comes back.
+  const ensureWallet = async (): Promise<EvmWallet> => {
+    const connected = wallets.find((w) => w.address?.toLowerCase() === ownerAddress?.toLowerCase()) ?? wallets[0];
+    if (connected) return connected;
+    setPhase("connecting");
+    return new Promise<EvmWallet>((resolve, reject) => {
+      connectCbRef.current = { resolve, reject };
+      connectWallet();
+    });
   };
 
   // Polls the BE until its DepositWatcher confirms the shielded balance reached the entry amount.
@@ -400,9 +440,7 @@ function BuyInSheet({
         pid = res.playerId;
       }
       const exported = await api.getUnlinkAccount(gameId, pid);
-      const wallet =
-        wallets.find((w) => w.address?.toLowerCase() === ownerAddress?.toLowerCase()) ?? wallets[0];
-      if (!wallet) throw new Error("No wallet connected to deposit from");
+      const wallet = await ensureWallet();
       // Deposit happens on Base mainnet — make sure the wallet is on the right chain first.
       await wallet.switchChain(8453).catch(() => {});
       const provider = (await wallet.getEthereumProvider()) as Parameters<typeof depositEntry>[0]["provider"];

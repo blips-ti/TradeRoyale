@@ -17,7 +17,7 @@ const UNLINK_ENV = process.env.NEXT_PUBLIC_UNLINK_ENVIRONMENT || "base-sepolia";
 /** Minimal EIP-1193 surface (what Privy's wallet provider exposes). */
 export type Eip1193 = { request(args: { method: string; params?: unknown[] }): Promise<unknown> };
 
-export type DepositPhase = "preparing" | "registering" | "depositing" | "confirming";
+export type DepositPhase = "connecting" | "preparing" | "registering" | "depositing" | "confirming";
 
 export async function depositEntry(opts: {
   playerId: string;
