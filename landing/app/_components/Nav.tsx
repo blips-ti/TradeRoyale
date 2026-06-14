@@ -13,7 +13,7 @@ export function Nav() {
           </span>
         </a>
         <a
-          href="#enter"
+          href="https://app.traderoyale.xyz"
           className="inline-flex items-center justify-center gap-2 rounded-pill bg-lime px-5 py-2.5 text-[13px] font-bold uppercase tracking-[0.04em] text-bg shadow-[var(--shadow-lime)] transition-all hover:bg-lime-dim active:scale-[0.97]"
         >
           Join the battle

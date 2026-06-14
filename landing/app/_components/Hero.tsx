@@ -26,7 +26,7 @@ export function Hero() {
 
           <div className="animate-rise mt-[30px] flex flex-wrap gap-3 [animation-delay:0.22s]">
             <a
-              href="#enter"
+              href="https://app.traderoyale.xyz"
               className="btn-lime inline-flex items-center justify-center gap-2 rounded-pill bg-lime px-[26px] py-[13px] text-sm font-bold uppercase tracking-[0.04em] text-bg shadow-[var(--shadow-lime)] transition-all hover:bg-lime-dim active:scale-[0.97]"
             >
               Join the battle

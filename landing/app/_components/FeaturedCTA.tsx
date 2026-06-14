@@ -39,7 +39,7 @@ export function FeaturedCTA() {
           50 USDC · Bell in <span className="font-mono font-bold">{clock}</span>
         </p>
         <a
-          href="https://trade-royale-project.vercel.app/connect"
+          href="https://app.traderoyale.xyz"
           className="inline-flex items-center justify-center gap-2 rounded-pill bg-bg px-[26px] py-[13px] text-sm font-bold uppercase tracking-[0.04em] text-white transition-colors hover:bg-surface-2 active:scale-[0.97]"
         >
           Join the battle
