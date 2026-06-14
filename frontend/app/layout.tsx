@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Chakra_Petch, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "./_lib/auth";
+import { ChunkReload } from "./_components/ChunkReload";
 import { ServiceWorker } from "./_components/ServiceWorker";
 import { AchievementWatcher } from "./_components/AchievementWatcher";
 
@@ -76,6 +77,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
           <AchievementWatcher />
         </AuthProvider>
         <ServiceWorker />
+        <ChunkReload />
       </body>
     </html>
   );
