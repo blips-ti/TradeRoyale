@@ -27,6 +27,11 @@ const DEFAULT_BASE_RPC_URL = 'https://mainnet.base.org';
 const DEFAULT_OCTAV_API_URL = 'https://api.octav.fi/v1';
 // Default 0 — liquidation never skips small positions as dust unless explicitly configured.
 const DEFAULT_LIQUIDATION_MIN_USDC = '0';
+// Winner-shield deposit credit wait: Unlink credits the shielded note ASYNCHRONOUSLY after the
+// on-chain deposit confirms, so the withdraw must poll the shielded balance until it reflects the
+// deposit. Defaults must stand alone (Railway vars are unreliable for this path).
+const DEFAULT_SHIELD_CREDIT_TIMEOUT_MS = 60_000;
+const DEFAULT_SHIELD_CREDIT_POLL_MS = 3_000;
 
 const evmAddress = z.string().regex(/^0x[0-9a-fA-F]{40}$/, 'must be a 20-byte hex address');
 // Accepts "true"/"false" (case-insensitive) from the env string; defaults to true.
@@ -119,6 +124,10 @@ export const envSchema = z.object({
     .string()
     .regex(/^[0-9]+$/, 'LIQUIDATION_MIN_USDC must be a base-unit integer string')
     .default(DEFAULT_LIQUIDATION_MIN_USDC),
+  // Winner-shield: bound on how long to poll the shielded balance for the async deposit credit
+  // before failing the shield, and the gap between polls. Code defaults stand alone (no Railway).
+  SHIELD_CREDIT_TIMEOUT_MS: z.coerce.number().int().positive().default(DEFAULT_SHIELD_CREDIT_TIMEOUT_MS),
+  SHIELD_CREDIT_POLL_MS: z.coerce.number().int().positive().default(DEFAULT_SHIELD_CREDIT_POLL_MS),
 });
 
 export type Env = z.infer<typeof envSchema>;

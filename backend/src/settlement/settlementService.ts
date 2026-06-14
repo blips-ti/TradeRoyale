@@ -41,6 +41,8 @@ export class SettlementService {
     private readonly hub: GameEventHub = gameEventHub,
     private readonly unlink: UnlinkService = unlinkService,
     private readonly entryToken: string = env.ENTRY_TOKEN_ADDRESS,
+    private readonly creditTimeoutMs: number = env.SHIELD_CREDIT_TIMEOUT_MS,
+    private readonly creditPollMs: number = env.SHIELD_CREDIT_POLL_MS,
   ) {}
 
   // Computes the prize pool (sum of finalUsdc) + winner (rank 1), persists the record with
@@ -123,11 +125,59 @@ export class SettlementService {
       return this.recordShield(gameId, winner, { amount, phase: "consolidated" });
     }
     const deposited = await this.depositToUnlink(gameId, winner, amount);
-    if (deposited.phase === "deposit_failed") return deposited;
+    if (deposited) return deposited;
+    // Unlink credits the shielded note asynchronously after the deposit tx confirms; the withdraw
+    // sees balance 0 until then, so wait for the credit (which records the single 'deposited' phase)
+    // before attempting it.
+    const credited = await this.awaitDepositCredit(gameId, winner, amount);
+    if (credited.phase === "deposit_uncredited") return credited;
     return this.withdrawToDepositor(gameId, winner, amount);
   }
 
-  private async depositToUnlink(gameId: string, winner: Player, amount: string): Promise<ShieldResult> {
+  // Polls the winner's shielded balance until it reflects the just-deposited amount, then returns
+  // so the withdraw can proceed. Bounded by an absolute deadline (SHIELD_CREDIT_TIMEOUT_MS) so
+  // settlement can never hang; on timeout records deposit_uncredited and the withdraw is skipped.
+  private async awaitDepositCredit(gameId: string, winner: Player, amount: string): Promise<ShieldResult> {
+    const need = new BigNumber(amount);
+    const deadline = Date.now() + this.creditTimeoutMs;
+    let balance = "0";
+    while (Date.now() < deadline) {
+      balance = await this.readShieldedBalance(winner);
+      if (new BigNumber(balance).gte(need)) {
+        logger.info({ gameId, winnerPlayerId: winner.id, amount, balance }, "[settlement] shield deposit credited");
+        return this.recordShield(gameId, winner, { amount, phase: "deposited" });
+      }
+      logger.info({ gameId, winnerPlayerId: winner.id, amount, balance }, "[settlement] shield deposit not yet credited; waiting");
+      await this.sleep(this.creditPollMs);
+    }
+    const error = `shield deposit not credited in time (have ${balance}, need ${amount})`;
+    logger.error({ gameId, winnerPlayerId: winner.id, amount, balance }, "[settlement] shield deposit credit timed out");
+    return this.recordShield(gameId, winner, { amount, phase: "deposit_uncredited", error });
+  }
+
+  // Reads the winner's shielded balance for the entry token. Failures return "0" so the poll keeps
+  // retrying until the deadline rather than aborting on a transient SDK read error.
+  private async readShieldedBalance(winner: Player): Promise<string> {
+    try {
+      return await this.unlink.getTokenBalance({
+        playerId: winner.id,
+        unlinkAddress: winner.unlinkAddress,
+        encMnemonic: winner.encMnemonic,
+        token: this.entryToken,
+      });
+    } catch (error) {
+      logger.warn({ err: error, winnerPlayerId: winner.id }, "[settlement] shielded balance read failed; will retry");
+      return "0";
+    }
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  // Confirms the on-chain deposit only. Returns a deposit_failed ShieldResult on failure, or null on
+  // success — the 'deposited' phase is recorded later by awaitDepositCredit once the note is credited.
+  private async depositToUnlink(gameId: string, winner: Player, amount: string): Promise<ShieldResult | null> {
     logger.info(
       { gameId, winnerPlayerId: winner.id, amount, unlinkAddress: winner.unlinkAddress },
       "[settlement] shield deposit-to-Unlink attempt",
@@ -142,7 +192,7 @@ export class SettlementService {
         amount,
       });
       logger.info({ gameId, winnerPlayerId: winner.id, amount, unlinkAddress: winner.unlinkAddress }, "[settlement] shield deposit-to-Unlink confirmed");
-      return this.recordShield(gameId, winner, { amount, phase: "deposited" });
+      return null;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       // Pass the raw error as `err` (serializer renders the full Permit2/SDK detail) — the whole

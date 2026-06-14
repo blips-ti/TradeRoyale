@@ -72,6 +72,7 @@ export type ShieldPhase =
   | 'deposited' // pot is inside Unlink (withdrawal not yet attempted)
   | 'withdrawn' // pot delivered to the winner's depositor wallet (terminal success)
   | 'deposit_failed' // deposit threw; funds safe in the Privy wallet
+  | 'deposit_uncredited' // deposit confirmed but Unlink never credited the shielded note in time
   | 'withdraw_failed' // withdrawal threw; funds safe inside Unlink
   | 'no_destination'; // no resolvable depositor wallet; pot left in the Privy wallet
 

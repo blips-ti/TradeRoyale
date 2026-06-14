@@ -73,8 +73,14 @@ interface Options {
   // Overrides for the winner-shield collaborators; each defaults to a working happy path.
   deposit?: UnlinkService['depositFromPrivyWallet'];
   withdraw?: UnlinkService['withdrawToAddress'];
+  // Shielded-balance reader the credit poll calls; defaults to crediting the full pot immediately.
+  getTokenBalance?: UnlinkService['getTokenBalance'];
   resolveDepositorAddress?: PrivyService['resolveDepositorAddress'];
 }
+
+// Short timing so the credit poll loop in tests resolves immediately instead of waiting real seconds.
+const CREDIT_TIMEOUT_MS = 50;
+const CREDIT_POLL_MS = 1;
 
 function buildService(options: Options) {
   const saved: Settlement[] = [];
@@ -101,12 +107,49 @@ function buildService(options: Options) {
   const privy = { sendTransaction: send, resolveDepositorAddress } as unknown as PrivyService;
   const deposit = options.deposit ?? vi.fn(async () => undefined);
   const withdraw = options.withdraw ?? vi.fn(async () => undefined);
-  const unlink = { depositFromPrivyWallet: deposit, withdrawToAddress: withdraw } as unknown as UnlinkService;
+  // Default credit: the shielded balance immediately equals the winner's consolidated pot (the
+  // deposited amount), so the poll passes on the first read. Looks up by playerId -> pot balance.
+  const getTokenBalance =
+    options.getTokenBalance ??
+    vi.fn(async (context: { playerId: string }) => {
+      const address = playersById.get(context.playerId)?.privyWalletAddress ?? '';
+      return options.balances[address.toLowerCase()] ?? '0';
+    });
+  const unlink = {
+    depositFromPrivyWallet: deposit,
+    withdrawToAddress: withdraw,
+    getTokenBalance,
+  } as unknown as UnlinkService;
   const hub = {
     broadcast: vi.fn((type: string, _id: string, data: Record<string, unknown>) => void broadcasts.push({ type, data })),
   } as unknown as GameEventHub;
-  const service = new SettlementService(settlements, players, viem, privy, hub, unlink, ENTRY_TOKEN);
-  return { service, settlements, players, viem, privy, hub, unlink, saved, broadcasts, send, deposit, withdraw, resolveDepositorAddress };
+  const service = new SettlementService(
+    settlements,
+    players,
+    viem,
+    privy,
+    hub,
+    unlink,
+    ENTRY_TOKEN,
+    CREDIT_TIMEOUT_MS,
+    CREDIT_POLL_MS,
+  );
+  return {
+    service,
+    settlements,
+    players,
+    viem,
+    privy,
+    hub,
+    unlink,
+    saved,
+    broadcasts,
+    send,
+    deposit,
+    withdraw,
+    getTokenBalance,
+    resolveDepositorAddress,
+  };
 }
 
 describe('SettlementService.buildSettlement', () => {
@@ -373,6 +416,50 @@ describe('SettlementService.executePayout winner shield', () => {
     expect(payout.shield!.phase).toBe('withdraw_failed');
     expect(payout.shield!.finalDestination).toBe(DEPOSITORS.winner);
     expect(saved.at(-1)!.shield!.phase).toBe('withdraw_failed');
+  });
+
+  it('waits for the async shielded credit (balance 0 for N polls) then withdraws once credited', async () => {
+    const { winner, loser, balances } = shieldSetup();
+    // Unlink credits the shielded note asynchronously: the first two reads see 0, the third the pot.
+    let reads = 0;
+    const getTokenBalance = vi.fn(async () => {
+      reads += 1;
+      return reads < 3 ? '0' : '3000000';
+    }) as unknown as UnlinkService['getTokenBalance'];
+    const { service, withdraw, deposit, saved, broadcasts } = buildService({
+      players: [winner, loser],
+      balances,
+      getTokenBalance,
+    });
+    const payout = await service.executePayout(settlementFor([winner, loser], '4200000'));
+
+    expect(deposit).toHaveBeenCalledTimes(1);
+    expect((getTokenBalance as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(withdraw).toHaveBeenCalledTimes(1);
+    expect(payout.shield!.phase).toBe('withdrawn');
+    expect(payout.shield!.finalDestination).toBe(DEPOSITORS.winner);
+    // 'deposited' is recorded once (when credited), then 'withdrawn' — no duplicate deposit broadcast.
+    const settled = broadcasts.filter((b) => b.type === 'prize_settled');
+    expect(settled.map((b) => b.data.phase)).toEqual(['deposited', 'withdrawn']);
+    expect(saved.at(-1)!.shield!.phase).toBe('withdrawn');
+  });
+
+  it('records deposit_uncredited and never withdraws when the shielded credit never lands', async () => {
+    const { winner, loser, balances } = shieldSetup();
+    // The deposit confirms on-chain but the shielded note is never credited -> the poll times out.
+    const getTokenBalance = vi.fn(async () => '0') as unknown as UnlinkService['getTokenBalance'];
+    const { service, withdraw, deposit, saved } = buildService({
+      players: [winner, loser],
+      balances,
+      getTokenBalance,
+    });
+    const payout = await service.executePayout(settlementFor([winner, loser], '4200000'));
+
+    expect(deposit).toHaveBeenCalledTimes(1);
+    expect(withdraw).not.toHaveBeenCalled();
+    expect(payout.shield!.phase).toBe('deposit_uncredited');
+    expect(payout.shield!.error).toBe('shield deposit not credited in time (have 0, need 3000000)');
+    expect(saved.at(-1)!.shield!.phase).toBe('deposit_uncredited');
   });
 
   it('records no_destination and skips the withdrawal when no depositor wallet resolves', async () => {
