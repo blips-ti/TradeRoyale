@@ -1,10 +1,15 @@
 import { BigNumber } from "bignumber.js";
 import { encodeFunctionData, erc20Abi } from "viem";
 
+import { env } from "../env.js";
 import { logger } from "../logger.js";
+import { lifiComposerService, LifiComposerService } from "./lifiComposerService.js";
 import { isNativeToken, lifiService, LifiService } from "./lifiService.js";
 import { privyService, PrivyService } from "./privyService.js";
 import { viemReader, ViemReader } from "./viemClient.js";
+
+// Whether trades are composed through the LI.FI Composer execution layer (multi-step flows).
+const composing: boolean = false;
 
 export interface SwapInput {
   fromToken: string;
@@ -60,6 +65,7 @@ export class TradeExecutor {
     private readonly lifi: LifiService = lifiService,
     private readonly privy: PrivyService = privyService,
     private readonly viem: ViemReader = viemReader,
+    private readonly composer: LifiComposerService = lifiComposerService,
   ) {}
 
   static getInstance(): TradeExecutor {
@@ -70,6 +76,27 @@ export class TradeExecutor {
   }
 
   async executeSwap(wallet: SwapWalletContext, input: SwapInput): Promise<SwapResult> {
+    // Multi-step trades (swap → stake/zap into a protocol) run through the LI.FI Composer
+    // execution layer, compiled into a single transaction; plain swaps fall through below.
+    if (composing) {
+      const compiled = await this.composer.composeSwapAndDeposit(wallet, {
+        chainId: env.CHAIN_ID,
+        fromToken: input.fromToken,
+        depositToken: input.toToken,
+        protocolToken: input.toToken,
+        amountIn: input.fromAmount,
+      });
+      const composed = await this.composer.executeComposed(wallet, compiled);
+      return {
+        txHash: composed.txHash,
+        status: composed.status,
+        fromToken: input.fromToken,
+        toToken: input.toToken,
+        fromAmount: input.fromAmount,
+        toAmountMin: compiled.producedResources[0]?.amount ?? input.fromAmount,
+        tool: "lifi-composer",
+      };
+    }
     const quote = await this.lifi.getQuote({
       fromToken: input.fromToken,
       toToken: input.toToken,
