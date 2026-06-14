@@ -57,6 +57,16 @@ export const api = {
 
   getGame: (gameId: string) => req<GameWithPlayers>(`/games/${gameId}`),
 
+  // Create a new competition (lobby). entryAmount is base-unit USDC; durationSec + maxPlayers
+  // fall back to backend defaults when omitted.
+  createGame: (body: {
+    name?: string;
+    description?: string;
+    entryAmount: string;
+    durationSec?: number;
+    maxPlayers?: number;
+  }) => req<Game>(`/games`, { method: "POST", body: JSON.stringify(body) }),
+
   // Recover the authenticated user's active game + player (reconnect / new device).
   getActive: () => req<ActivePlayerResponse>(`/games/me`),
 

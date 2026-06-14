@@ -9,6 +9,8 @@ export type TradeKind = "swap" | "contract_call";
 export type Game = {
   id: string;
   status: GameStatus;
+  name?: string; // optional creator-supplied name (FE derives one when absent)
+  description?: string;
   entryToken: string;
   entryAmount: string; // base-unit USDC
   durationSec: number;

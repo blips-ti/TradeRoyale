@@ -4,6 +4,9 @@ export type DepositStatus = 'pending' | 'confirmed';
 export interface Game {
   id: string;
   status: GameStatus;
+  // Optional creator-supplied display name + description (FE derives a name when absent).
+  name?: string;
+  description?: string;
   entryToken: string;
   entryAmount: string;
   durationSec: number;

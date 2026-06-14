@@ -13,28 +13,23 @@ export function useGames(pollMs = 5000) {
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
-  React.useEffect(() => {
-    let alive = true;
-    const load = async () => {
-      try {
-        const games = await api.listGames("all");
-        if (!alive) return;
-        setViews(games.map((g) => gameToView(g, g.playerCount ?? 0)));
-        setError(null);
-      } catch (e) {
-        if (!alive) return;
-        setError((e as Error).message || "Can't reach the backend");
-      } finally {
-        if (alive) setLoading(false);
-      }
-    };
-    load();
-    const id = setInterval(load, pollMs);
-    return () => {
-      alive = false;
-      clearInterval(id);
-    };
-  }, [pollMs]);
+  const refresh = React.useCallback(async () => {
+    try {
+      const games = await api.listGames("all");
+      setViews(games.map((g) => gameToView(g, g.playerCount ?? 0)));
+      setError(null);
+    } catch (e) {
+      setError((e as Error).message || "Can't reach the backend");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  return { views, loading, error };
+  React.useEffect(() => {
+    void refresh();
+    const id = setInterval(() => void refresh(), pollMs);
+    return () => clearInterval(id);
+  }, [pollMs, refresh]);
+
+  return { views, loading, error, refresh };
 }

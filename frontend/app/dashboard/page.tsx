@@ -1,14 +1,17 @@
 "use client";
 
 import { useState } from "react";
-import { Radio, WifiOff } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
+import { Plus, Radio, WifiOff, X } from "lucide-react";
+import { useAuth } from "@/app/_lib/auth";
 import { useGame } from "@/app/_lib/store";
 import { useGames } from "@/app/_lib/useGames";
 import { useNow } from "@/app/_lib/useNow";
+import { api } from "@/app/_lib/api";
 import { usd } from "@/app/_lib/format";
 import { AppShell } from "@/app/_components/AppShell";
 import { MatchCard } from "@/app/_components/MatchCard";
-import { Card, Reveal, Spinner } from "@/app/_components/ui";
+import { Button, Card, Reveal, Spinner } from "@/app/_components/ui";
 
 export default function DashboardPage() {
   return (
@@ -19,10 +22,12 @@ export default function DashboardPage() {
 }
 
 function Dashboard() {
+  const { authenticated } = useAuth();
   const { joinedMatchId } = useGame();
   const now = useNow(1000);
   const [tab, setTab] = useState<"all" | "mine">("all");
-  const { views, loading, error } = useGames();
+  const [showCreate, setShowCreate] = useState(false);
+  const { views, loading, error, refresh } = useGames();
 
   const visible = tab === "mine" ? views.filter((v) => v.id === joinedMatchId) : views;
   // Ongoing (lobby): fullest first. Live: least time remaining.
@@ -126,7 +131,169 @@ function Dashboard() {
           )}
         </div>
       )}
+
+      {/* Floating create-competition button (connected users only). */}
+      {authenticated && (
+        <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 mx-auto flex max-w-md justify-end px-5 pb-[calc(env(safe-area-inset-bottom)+5rem)]">
+          <button
+            onClick={() => setShowCreate(true)}
+            aria-label="Create a competition"
+            className="pointer-events-auto grid h-14 w-14 place-items-center rounded-full bg-[color:var(--color-lime)] text-black shadow-[var(--shadow-lime)] transition active:scale-95"
+          >
+            <Plus className="h-6 w-6" strokeWidth={2.5} />
+          </button>
+        </div>
+      )}
+
+      <AnimatePresence>
+        {showCreate && (
+          <CreateMatchSheet
+            onClose={() => setShowCreate(false)}
+            onCreated={async () => {
+              await refresh();
+              setShowCreate(false);
+            }}
+          />
+        )}
+      </AnimatePresence>
     </div>
+  );
+}
+
+// Slide-up sheet to create a new competition. Collects name, description, max players, entry ($),
+// and duration (min); POSTs to the backend, then refreshes the list.
+function CreateMatchSheet({ onClose, onCreated }: { onClose: () => void; onCreated: () => Promise<void> }) {
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [players, setPlayers] = useState("2");
+  const [entry, setEntry] = useState("5");
+  const [duration, setDuration] = useState("5");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async () => {
+    const maxPlayers = Math.round(Number(players));
+    const entryUsd = Number(entry);
+    const durationMin = Math.round(Number(duration));
+    if (!name.trim()) return setError("Give your competition a name.");
+    if (!Number.isFinite(maxPlayers) || maxPlayers < 2) return setError("At least 2 players.");
+    if (!Number.isFinite(entryUsd) || entryUsd <= 0) return setError("Entry must be more than $0.");
+    if (!Number.isFinite(durationMin) || durationMin < 1) return setError("Duration must be at least 1 minute.");
+
+    setSubmitting(true);
+    setError(null);
+    try {
+      // USDC has 6 decimals: dollars → base units.
+      const entryAmount = String(Math.round(entryUsd * 1_000_000));
+      await api.createGame({
+        name: name.trim(),
+        description: description.trim() || undefined,
+        entryAmount,
+        maxPlayers,
+        durationSec: durationMin * 60,
+      });
+      await onCreated();
+    } catch (e) {
+      setError((e as Error).message || "Couldn't create the competition.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        onClick={onClose}
+        className="fixed inset-0 z-50 bg-black/60 backdrop-blur-[2px]"
+      />
+      <motion.div
+        initial={{ y: "100%" }}
+        animate={{ y: 0 }}
+        exit={{ y: "100%" }}
+        transition={{ type: "spring", stiffness: 320, damping: 34 }}
+        className="fixed inset-x-0 bottom-0 z-50 mx-auto max-h-[88dvh] w-full max-w-md overflow-y-auto rounded-t-[22px] border-t border-[color:var(--color-line)] bg-[color:var(--color-bg)] px-5 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] pt-3 no-scrollbar"
+      >
+        <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-[color:var(--color-line)]" />
+        <div className="flex items-center justify-between">
+          <h2 className="font-display text-[20px] font-bold uppercase tracking-tight">New competition</h2>
+          <button onClick={onClose} aria-label="Close" className="grid h-8 w-8 place-items-center rounded-full bg-[color:var(--color-surface)] text-muted">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="mt-4 flex flex-col gap-3.5">
+          <Field label="Name">
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              maxLength={60}
+              placeholder="Solar Gauntlet"
+              className="w-full bg-transparent text-[15px] text-fg outline-none placeholder:text-dim"
+            />
+          </Field>
+          <Field label="Description">
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              maxLength={280}
+              rows={2}
+              placeholder="What's the vibe of this match?"
+              className="w-full resize-none bg-transparent text-[15px] leading-snug text-fg outline-none placeholder:text-dim"
+            />
+          </Field>
+          <div className="grid grid-cols-3 gap-3">
+            <Field label="Players">
+              <input
+                value={players}
+                onChange={(e) => setPlayers(e.target.value)}
+                inputMode="numeric"
+                className="w-full bg-transparent text-[15px] text-fg outline-none"
+              />
+            </Field>
+            <Field label="Entry $">
+              <input
+                value={entry}
+                onChange={(e) => setEntry(e.target.value)}
+                inputMode="decimal"
+                className="w-full bg-transparent text-[15px] text-fg outline-none"
+              />
+            </Field>
+            <Field label="Minutes">
+              <input
+                value={duration}
+                onChange={(e) => setDuration(e.target.value)}
+                inputMode="numeric"
+                className="w-full bg-transparent text-[15px] text-fg outline-none"
+              />
+            </Field>
+          </div>
+
+          {error && <p className="text-center text-[12.5px] text-[color:var(--color-loss)]">{error}</p>}
+
+          <Button fullWidth onClick={submit} disabled={submitting} className="mt-1">
+            {submitting ? (
+              <>
+                <Spinner /> Creating…
+              </>
+            ) : (
+              "Create competition"
+            )}
+          </Button>
+        </div>
+      </motion.div>
+    </>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="flex flex-col gap-1.5">
+      <span className="px-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">{label}</span>
+      <div className="rounded-card border border-[color:var(--color-line)] bg-[color:var(--color-surface)] px-3.5 py-3">{children}</div>
+    </label>
   );
 }
 

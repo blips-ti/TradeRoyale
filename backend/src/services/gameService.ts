@@ -22,6 +22,8 @@ const MIN_FORCE_START_PLAYERS = 2;
 const MS_PER_SEC = 1000;
 
 export interface CreateGameInput {
+  name?: string;
+  description?: string;
   entryAmount: string;
   durationSec?: number;
   maxPlayers?: number;
@@ -102,6 +104,8 @@ export class GameService {
     const game: Game = {
       id: randomUUID(),
       status: "lobby",
+      name: input.name,
+      description: input.description,
       entryToken: env.ENTRY_TOKEN_ADDRESS,
       entryAmount: input.entryAmount,
       durationSec: input.durationSec ?? DEFAULT_DURATION_SEC,

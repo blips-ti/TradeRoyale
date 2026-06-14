@@ -12,6 +12,8 @@ const baseUnitAmount = z
   .refine((value) => BigInt(value) > 0n, 'amount must be greater than zero');
 
 export const createGameSchema = z.object({
+  name: z.string().trim().min(1).max(60).optional(),
+  description: z.string().trim().max(280).optional(),
   entryAmount: baseUnitAmount,
   durationSec: z.coerce.number().int().min(MIN_DURATION_SEC).max(MAX_DURATION_SEC).optional(),
   maxPlayers: z.coerce.number().int().min(MIN_MAX_PLAYERS).max(MAX_MAX_PLAYERS).optional(),

@@ -7,6 +7,7 @@ import { baseUnitsToNumber, bucketOf, type FeBucket } from "./units";
 export type MatchView = {
   id: string;
   name: string;
+  description?: string;
   tags: string[];
   bucket: FeBucket; // ongoing | live | ended
   entryUsd: number;
@@ -39,7 +40,8 @@ export function gameToView(game: Game, playerCount: number): MatchView {
   const entryUsd = baseUnitsToNumber(game.entryAmount);
   return {
     id: game.id,
-    name: gameName(game.id),
+    name: game.name?.trim() || gameName(game.id),
+    description: game.description,
     tags: ["crypto"],
     bucket: bucketOf(game.status),
     entryUsd,
