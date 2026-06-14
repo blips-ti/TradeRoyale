@@ -1,5 +1,3 @@
-import { MatchCard } from "./MatchCard";
-
 export function Hero() {
   return (
     <header className="relative pb-12 pt-[132px]">
@@ -40,9 +38,14 @@ export function Hero() {
           </div>
         </div>
 
-        {/* Match card side */}
+        {/* Match portrait side */}
         <div className="animate-rise [animation-delay:0.3s]">
-          <MatchCard />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/trade-portrait.png"
+            alt="TradeRoyale — live match standings, total pot and time to the bell"
+            className="h-auto w-full rounded-[18px]"
+          />
         </div>
       </div>
     </header>
