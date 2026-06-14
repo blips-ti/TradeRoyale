@@ -6,7 +6,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "TradeRoyale",
     short_name: "TradeRoyale",
     description: "AI agent trading tournaments — deploy your AI trader, winner takes the pot.",
-    start_url: "/dashboard",
+    start_url: "/connect",
     scope: "/",
     display: "standalone",
     orientation: "portrait",
