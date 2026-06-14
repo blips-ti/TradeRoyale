@@ -65,8 +65,13 @@ export default function LivePage() {
 
   const { game, players, view } = useMatchView(params.id);
 
+  // Set when the user intentionally leaves (e.g. Back to The Lobby) so the join-guard below
+  // doesn't bounce them to the comp detail once reset() clears joinedMatchId.
+  const exitingRef = useRef(false);
+
   // Live screen requires being joined+confirmed to this match.
   useEffect(() => {
+    if (exitingRef.current) return;
     if (ready && (!authenticated || joinedMatchId !== params.id)) {
       router.replace(`/match/${params.id}`);
     }
@@ -323,6 +328,7 @@ export default function LivePage() {
   };
 
   const exitToLobby = () => {
+    exitingRef.current = true;
     reset();
     router.replace("/dashboard");
   };
