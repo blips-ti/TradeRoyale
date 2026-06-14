@@ -3,21 +3,8 @@ import { BigNumber } from "bignumber.js";
 import { env } from "../env.js";
 import { logger } from "../logger.js";
 
-export interface NavResult {
-  // USD net asset value as a decimal string (BigNumber-normalized; never a float).
-  navUsd: string;
-  raw: unknown;
-}
-
 export class MissingOctavCredentialsError extends Error {}
 export class OctavError extends Error {}
-
-// Raw Octav /v1/nav response (USD default): { nav, currency, conversionPrice }.
-interface OctavNavResponse {
-  nav?: number | string;
-  currency?: string;
-  conversionPrice?: number | string;
-}
 
 // One plain wallet token holding (assetByProtocols.wallet.chains[*].protocolPositions.WALLET.assets[]).
 interface OctavAsset {
@@ -58,8 +45,8 @@ export interface PortfolioResult {
   raw: unknown;
 }
 
-// Sole adapter for the Octav public NAV API (api.octav.fi/v1). Used at settlement as an
-// INDEPENDENT cross-check of the on-chain final USDC; it is never the authoritative score.
+// Sole adapter for the Octav wallet API (api.octav.fi/v1/wallet). Provides each player's live
+// trading-wallet holdings + total USD value for the arena panel, the live chart, and scoring.
 export class OctavService {
   private static instance: OctavService;
 
@@ -73,29 +60,6 @@ export class OctavService {
       OctavService.instance = new OctavService();
     }
     return OctavService.instance;
-  }
-
-  // GET /v1/nav?addresses=<address> with Authorization: Bearer. Returns USD NAV as a string.
-  async getNav(address: string): Promise<NavResult> {
-    if (!this.apiKey) {
-      throw new MissingOctavCredentialsError("OCTAV_API_KEY is not set");
-    }
-    const params = new URLSearchParams({ addresses: address });
-    let response: Response;
-    try {
-      response = await fetch(`${this.baseUrl}/nav?${params.toString()}`, {
-        headers: { accept: "application/json", authorization: `Bearer ${this.apiKey}` },
-      });
-    } catch (error) {
-      logger.warn({ err: error, address }, "[octav] nav request failed");
-      throw new OctavError("Octav NAV request failed");
-    }
-    if (!response.ok) {
-      const detail = await response.text().catch(() => "");
-      throw new OctavError(`Octav responded ${response.status}: ${detail.slice(0, 200)}`);
-    }
-    const body = (await response.json()) as OctavNavResponse;
-    return { navUsd: this.normalizeNav(body.nav), raw: body };
   }
 
   // GET /v1/wallet?addresses=<address> — wallet token balances only (no DeFi positions). It
