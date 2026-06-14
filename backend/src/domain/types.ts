@@ -85,6 +85,9 @@ export interface ShieldResult {
   phase: ShieldPhase;
   finalDestination?: string;
   error?: string;
+  // The payout tx hash on the terminal 'withdrawn' phase. Set by the direct-payout path (one
+  // sponsored Privy → depositor transfer); the Unlink shield path leaves it undefined.
+  txHash?: string;
 }
 
 // One loser->winner USDC transfer in the winner-take-all consolidation. amount is the full

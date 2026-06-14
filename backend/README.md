@@ -248,6 +248,7 @@ openssl rand -hex 32
 | `OCTAV_API_KEY`            | no\*     | —                                            | Octav NAV API key (`data.octav.fi`), Bearer; lazy — only hit at settlement |
 | `OCTAV_API_URL`            | no       | `https://api.octav.fi/v1`                     | Octav public API base URL |
 | `LIQUIDATION_MIN_USDC`     | no       | `0`                                          | settlement dust floor (base-unit USDC); default `0` liquidates every position (no dust skip) |
+| `SETTLE_USE_UNLINK_SHIELD` | no       | `false`                                      | `false` (default) → **direct** winner payout (one sponsored Privy → depositor USDC transfer; no Unlink/decrypt); `true` → legacy Privy → Unlink → depositor privacy shield |
 
 Env is validated at boot with zod (`src/env.ts`). Missing or malformed values fail fast.
 `*` `ANTHROPIC_API_KEY`, `PRIVY_APP_ID`, `PRIVY_APP_SECRET`, and `OCTAV_API_KEY` are enforced
@@ -383,6 +384,17 @@ At `endsAt` the `GameClock` settles the game **server-side** (no agent / Anthrop
    per-transfer audit is stored in `payouts`. A `prize_paid` WS event carries
    `{ winnerPlayerId, winnerAddress, prizePoolUsdc, transfers }`. Funds consolidate **publicly**
    into the winner's Privy wallet — no CRE validation and no Unlink private payout.
+7. **Winner payout (`SETTLE_USE_UNLINK_SHIELD`).** After consolidation, the pot leaves the
+   winner's Privy wallet. The flag selects the path (default `false`):
+   - **`false` — direct payout (default).** One sponsored erc20 `transfer` of the full on-chain
+     pot straight from the Privy wallet to the winner's resolved depositor wallet — no Unlink,
+     no mnemonic decrypt, no Permit2. Records `phase: 'withdrawn'` with the payout `txHash`.
+   - **`true` — Unlink shield.** Legacy Privy → Unlink → depositor route (deposit, await the async
+     shielded credit, withdraw). Records the phase reached (`deposited`/`withdrawn`/…).
+
+   Both paths reuse the same `ShieldResult`/`prize_settled` machinery and never throw (a failure
+   leaves funds safe in the Privy wallet and records `withdraw_failed`/`no_destination`). The
+   outcome is persisted in `shield` on the settlement record and surfaced via `GET /games/:gameId/results`.
 
 ---
 

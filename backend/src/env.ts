@@ -133,6 +133,10 @@ export const envSchema = z.object({
   // before failing the shield, and the gap between polls. Code defaults stand alone (no Railway).
   SHIELD_CREDIT_TIMEOUT_MS: z.coerce.number().int().positive().default(DEFAULT_SHIELD_CREDIT_TIMEOUT_MS),
   SHIELD_CREDIT_POLL_MS: z.coerce.number().int().positive().default(DEFAULT_SHIELD_CREDIT_POLL_MS),
+  // Route the winner payout through the Unlink privacy shield (Privy → Unlink → depositor).
+  // Code default false → pay the winner DIRECTLY (Privy → depositor) with no Unlink/decrypt hop,
+  // sidestepping the intermittent mnemonic-decrypt failures. Set true to re-enable the shield.
+  SETTLE_USE_UNLINK_SHIELD: booleanFlag.default('false'),
 });
 
 export type Env = z.infer<typeof envSchema>;

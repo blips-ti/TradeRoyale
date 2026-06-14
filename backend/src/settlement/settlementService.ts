@@ -43,6 +43,7 @@ export class SettlementService {
     private readonly entryToken: string = env.ENTRY_TOKEN_ADDRESS,
     private readonly creditTimeoutMs: number = env.SHIELD_CREDIT_TIMEOUT_MS,
     private readonly creditPollMs: number = env.SHIELD_CREDIT_POLL_MS,
+    private readonly useUnlinkShield: boolean = env.SETTLE_USE_UNLINK_SHIELD,
   ) {}
 
   // Computes the prize pool (sum of finalUsdc) + winner (rank 1), persists the record with
@@ -110,11 +111,62 @@ export class SettlementService {
     };
   }
 
+  // Pays the winner's consolidated pot out of the public Privy wallet. SETTLE_USE_UNLINK_SHIELD
+  // (default false) selects the path: false → a direct sponsored Privy → depositor USDC transfer
+  // (no Unlink/decrypt); true → the legacy Privy → Unlink → depositor privacy shield. Never throws.
+  private async shieldWinnerPot(gameId: string, winner: Player): Promise<ShieldResult> {
+    if (!this.useUnlinkShield) return this.directPayout(gameId, winner);
+    return this.unlinkShieldWinnerPot(gameId, winner);
+  }
+
+  // Direct payout: read the winner's on-chain pot, resolve their original depositor wallet, and
+  // send the FULL balance there in ONE sponsored Privy transfer. No Unlink, no mnemonic decrypt,
+  // no Permit2. Records the terminal phase + tx hash on the same ShieldResult machinery.
+  private async directPayout(gameId: string, winner: Player): Promise<ShieldResult> {
+    if (!winner.privyWalletId) {
+      logger.warn({ gameId, winnerPlayerId: winner.id }, "[settlement] winner has no Privy wallet; payout skipped");
+      return this.recordShield(gameId, winner, { amount: "0", phase: "consolidated" });
+    }
+    const amount = await this.viem.getErc20Balance(this.entryToken, winner.privyWalletAddress!);
+    logger.info({ gameId, winnerPlayerId: winner.id, amount }, "[settlement] direct payout pot read");
+    if (new BigNumber(amount).lte(0)) {
+      return this.recordShield(gameId, winner, { amount, phase: "consolidated" });
+    }
+    const destination = winner.ownerId ? await this.privy.resolveDepositorAddress(winner.ownerId) : null;
+    if (!destination) {
+      logger.warn({ gameId, winnerPlayerId: winner.id, ownerId: winner.ownerId ?? null }, "[settlement] no depositor wallet resolved; pot stays in the Privy wallet");
+      return this.recordShield(gameId, winner, { amount, phase: "no_destination" });
+    }
+    return this.sendDirectPayout(gameId, winner, amount, destination);
+  }
+
+  // Sends the full pot to the resolved depositor via a sponsored erc20 transfer, then waits for the
+  // receipt. Crash-safe: a failure records withdraw_failed (funds safe in the Privy wallet).
+  private async sendDirectPayout(gameId: string, winner: Player, amount: string, destination: string): Promise<ShieldResult> {
+    logger.info({ gameId, winnerPlayerId: winner.id, amount, finalDestination: destination }, "[settlement] direct payout attempt");
+    try {
+      const data = encodeFunctionData({
+        abi: erc20Abi,
+        functionName: "transfer",
+        // viem needs a JS bigint here — convert at this single call site from the base-unit string.
+        args: [destination as Address, BigInt(new BigNumber(amount).toFixed(0))],
+      });
+      const hash = await this.privy.sendTransaction(winner.privyWalletId!, { to: this.entryToken, data, value: "0" }, { sponsor: true });
+      await this.viem.waitForReceipt(hash);
+      logger.info({ gameId, winnerPlayerId: winner.id, amount, finalDestination: destination, txHash: hash }, "[settlement] direct payout confirmed");
+      return this.recordShield(gameId, winner, { amount, phase: "withdrawn", finalDestination: destination, txHash: hash });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error({ err: error, gameId, winnerPlayerId: winner.id, amount, finalDestination: destination }, "[settlement] direct payout failed");
+      return this.recordShield(gameId, winner, { amount, phase: "withdraw_failed", finalDestination: destination, error: message });
+    }
+  }
+
   // Routes the winner's consolidated pot out of the public Privy wallet into Unlink, then back
   // out to the winner's OWN funding wallet — the Unlink hop is what shields the payout. Reads the
   // live on-chain pot first (the consolidated total), records the exact phase reached, and
   // broadcasts prize_settled. Never throws: funds stay safe in the Privy wallet or in Unlink.
-  private async shieldWinnerPot(gameId: string, winner: Player): Promise<ShieldResult> {
+  private async unlinkShieldWinnerPot(gameId: string, winner: Player): Promise<ShieldResult> {
     if (!winner.privyWalletId) {
       logger.warn({ gameId, winnerPlayerId: winner.id }, "[settlement] winner has no Privy wallet; shield skipped");
       return this.recordShield(gameId, winner, { amount: "0", phase: "consolidated" });
@@ -235,7 +287,7 @@ export class SettlementService {
   private recordShield(
     gameId: string,
     winner: Player,
-    fields: { amount: string; phase: ShieldPhase; finalDestination?: string; error?: string },
+    fields: { amount: string; phase: ShieldPhase; finalDestination?: string; error?: string; txHash?: string },
   ): ShieldResult {
     const shield: ShieldResult = { winnerPlayerId: winner.id, ...fields };
     logger.info(

@@ -76,6 +76,9 @@ interface Options {
   // Shielded-balance reader the credit poll calls; defaults to crediting the full pot immediately.
   getTokenBalance?: UnlinkService['getTokenBalance'];
   resolveDepositorAddress?: PrivyService['resolveDepositorAddress'];
+  // Selects the payout path: true → legacy Privy→Unlink→depositor shield; false (default) → direct
+  // Privy→depositor transfer. Defaults true here so the legacy Unlink suites keep exercising it.
+  useUnlinkShield?: boolean;
 }
 
 // Short timing so the credit poll loop in tests resolves immediately instead of waiting real seconds.
@@ -133,6 +136,7 @@ function buildService(options: Options) {
     ENTRY_TOKEN,
     CREDIT_TIMEOUT_MS,
     CREDIT_POLL_MS,
+    options.useUnlinkShield ?? true,
   );
   return {
     service,
@@ -499,5 +503,137 @@ describe('SettlementService.executePayout winner shield', () => {
     // Consolidation is independent of the shield: the loser->winner transfer audit survives.
     expect(broadcasts.find((b) => b.type === 'prize_paid')).toBeDefined();
     expect(saved.at(-1)!.payouts).toEqual([{ playerId: 'loser', amount: '1200000', txHash: '0xhash', ok: true }]);
+  });
+});
+
+describe('SettlementService.executePayout direct payout (SETTLE_USE_UNLINK_SHIELD=false)', () => {
+  // The direct path pays the winner's consolidated pot straight from the Privy wallet to their
+  // resolved depositor wallet in ONE sponsored transfer — no Unlink deposit/withdraw, no decrypt.
+  function directSetup() {
+    const winner = player('winner');
+    const loser = player('loser');
+    const balances = {
+      [winner.privyWalletAddress!.toLowerCase()]: '3000000',
+      [loser.privyWalletAddress!.toLowerCase()]: '1200000',
+    };
+    return { winner, loser, balances };
+  }
+
+  // Mirrors the production send mock but lets us assert per-call by walletId. The first call is the
+  // loser->winner consolidation; the second is the direct winner->depositor payout.
+  function findWinnerPayoutCall(send: PrivyService['sendTransaction'], winnerWalletId: string) {
+    return (send as ReturnType<typeof vi.fn>).mock.calls.find((call) => call[0] === winnerWalletId);
+  }
+
+  it('sends the full pot directly to the resolved depositor (withdrawn + txHash), no Unlink deposit', async () => {
+    const { winner, loser, balances } = directSetup();
+    const send = vi.fn(async () => '0xpayouthash') as unknown as PrivyService['sendTransaction'];
+    const { service, deposit, withdraw, resolveDepositorAddress, saved } = buildService({
+      players: [winner, loser],
+      balances,
+      sendTransaction: send,
+      useUnlinkShield: false,
+    });
+    const payout = await service.executePayout(settlementFor([winner, loser], '4200000'));
+
+    // No Unlink hop touched on the direct path.
+    expect(deposit).not.toHaveBeenCalled();
+    expect(withdraw).not.toHaveBeenCalled();
+
+    expect((resolveDepositorAddress as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(winner.ownerId);
+    const winnerCall = findWinnerPayoutCall(send, winner.privyWalletId!);
+    expect(winnerCall).toBeDefined();
+    const [, request, sendOptions] = winnerCall!;
+    expect(request.to).toBe(ENTRY_TOKEN);
+    expect(request.value).toBe('0');
+    expect(sendOptions).toEqual({ sponsor: true });
+    const decoded = decodeFunctionData({ abi: erc20Abi, data: request.data as `0x${string}` });
+    expect(decoded.functionName).toBe('transfer');
+    expect((decoded.args[0] as string).toLowerCase()).toBe(DEPOSITORS.winner!.toLowerCase());
+    expect((decoded.args[1] as bigint).toString()).toBe('3000000');
+
+    expect(payout.shield).toEqual({
+      winnerPlayerId: 'winner',
+      amount: '3000000',
+      phase: 'withdrawn',
+      finalDestination: DEPOSITORS.winner,
+      txHash: '0xpayouthash',
+    });
+    expect(saved.at(-1)!.shield!.phase).toBe('withdrawn');
+    expect(saved.at(-1)!.shield!.txHash).toBe('0xpayouthash');
+  });
+
+  it('broadcasts a single prize_settled for the withdrawn phase', async () => {
+    const { winner, loser, balances } = directSetup();
+    const { service, broadcasts } = buildService({
+      players: [winner, loser],
+      balances,
+      useUnlinkShield: false,
+    });
+    await service.executePayout(settlementFor([winner, loser], '4200000'));
+    const settled = broadcasts.filter((b) => b.type === 'prize_settled');
+    expect(settled.map((b) => b.data.phase)).toEqual(['withdrawn']);
+    expect(settled.at(-1)!.data.finalDestination).toBe(DEPOSITORS.winner);
+    expect(settled.at(-1)!.data.amount).toBe('3000000');
+  });
+
+  it('records no_destination and never sends a payout when no depositor wallet resolves', async () => {
+    const { winner, loser, balances } = directSetup();
+    const resolveDepositorAddress = vi.fn(async () => null) as unknown as PrivyService['resolveDepositorAddress'];
+    const send = vi.fn(async () => '0xhash') as unknown as PrivyService['sendTransaction'];
+    const { service, deposit, saved } = buildService({
+      players: [winner, loser],
+      balances,
+      sendTransaction: send,
+      resolveDepositorAddress,
+      useUnlinkShield: false,
+    });
+    const payout = await service.executePayout(settlementFor([winner, loser], '4200000'));
+
+    expect(deposit).not.toHaveBeenCalled();
+    // Only the loser->winner consolidation send happened; no winner->depositor payout.
+    expect(findWinnerPayoutCall(send, winner.privyWalletId!)).toBeUndefined();
+    expect(payout.shield!.phase).toBe('no_destination');
+    expect(payout.shield!.finalDestination).toBeUndefined();
+    expect(payout.shield!.txHash).toBeUndefined();
+    expect(saved.at(-1)!.shield!.phase).toBe('no_destination');
+  });
+
+  it('records withdraw_failed when the direct payout transfer throws', async () => {
+    const { winner, loser, balances } = directSetup();
+    const send = vi.fn(async (walletId: string) => {
+      if (walletId === winner.privyWalletId) throw new Error('privy payout boom');
+      return '0xhash';
+    }) as unknown as PrivyService['sendTransaction'];
+    const { service, deposit, saved } = buildService({
+      players: [winner, loser],
+      balances,
+      sendTransaction: send,
+      useUnlinkShield: false,
+    });
+    const payout = await service.executePayout(settlementFor([winner, loser], '4200000'));
+
+    expect(deposit).not.toHaveBeenCalled();
+    expect(payout.shield!.phase).toBe('withdraw_failed');
+    expect(payout.shield!.finalDestination).toBe(DEPOSITORS.winner);
+    expect(payout.shield!.error).toContain('privy payout boom');
+    expect(payout.shield!.txHash).toBeUndefined();
+    expect(saved.at(-1)!.shield!.phase).toBe('withdraw_failed');
+  });
+
+  it('skips the direct payout (phase consolidated) when the winner pot reads as zero on-chain', async () => {
+    const winner = player('winner');
+    const balances = { [winner.privyWalletAddress!.toLowerCase()]: '0' };
+    const send = vi.fn(async () => '0xhash') as unknown as PrivyService['sendTransaction'];
+    const { service, deposit } = buildService({
+      players: [winner],
+      balances,
+      sendTransaction: send,
+      useUnlinkShield: false,
+    });
+    const payout = await service.executePayout(settlementFor([winner], '0'));
+    expect(deposit).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    expect(payout.shield!.phase).toBe('consolidated');
   });
 });
