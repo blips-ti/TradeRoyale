@@ -22,7 +22,7 @@ const COLORS = ["#C5F72B", "#34D6E0", "#FF36A3", "#ff8a3d", "#3da5ff", "#A6D61F"
 
 // Must match the backend SETTLE_OCTAV_DELAY_MS — the wait after the bell before the final Octav
 // /wallet snapshot. The settling screen counts this window down before results appear.
-const SETTLE_WINDOW_MS = 60_000;
+const SETTLE_WINDOW_MS = 15_000;
 
 // Known Base tokens so trade lines read "Swapped 0.05 USDC → WETH" instead of raw addresses.
 const TOKEN_META: Record<string, { symbol: string; decimals: number }> = {
